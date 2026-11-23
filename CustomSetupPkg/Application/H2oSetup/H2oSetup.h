@@ -20,6 +20,7 @@
 #include <Protocol/HiiConfigRouting.h>
 #include <Protocol/SimplePointer.h>
 #include <Protocol/AbsolutePointer.h>
+#include <Protocol/SimpleTextIn.h>
 
 /* ---------------------------------------------------------------- palette */
 
@@ -139,10 +140,10 @@ EFI_STATUS GfxPresent (VOID);
 #define EV_WHEEL    5
 
 typedef struct {
-  UINT32  Type;
-  EFI_KEY Key;
-  INT32   X, Y;
-  INT32   Wheel;
+  UINT32        Type;
+  EFI_INPUT_KEY Key;
+  INT32         X, Y;
+  INT32         Wheel;
 } INPUT_EVENT;
 
 EFI_STATUS InputInit (VOID);
