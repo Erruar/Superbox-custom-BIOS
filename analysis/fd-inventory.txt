@@ -1,0 +1,29 @@
+[i] bios-dumps/O2 igpu oc 960.fd: 8,388,608 B
+[i] top-level FVs: 5
+[FV] 0x0c3000 size=0x235000 files=3 used=0x225209 free=0xfdf7 depth=0
+[FV] 0x2f8000 size=0x100000 files=8 used=0xdb4fe free=0x24b02 depth=0
+[FV] 0x550000 size=0x13e000 files=4 used=0x39ea8 free=0x104158 depth=0
+[FV] 0x6c0000 size=0x13e000 files=4 used=0x39ea8 free=0x104158 depth=0
+[FV] 0x7ff000 size=0x1000 files=1 used=0x20 free=0xfe0 depth=0
+[FFS] 0x000c3048 ffffffff-ffff-ffff-ffff-ffffffffffff pad          size=0x2c state=f8 d=0 '' []
+[FFS] 0x000c3078 20bc8ac9-94d1-4208-ab28-5d673fd73486 firmware_version size=0x2250c1 state=f8 d=0 '' [GUID_DEFINED guid=ee4e5898-3914-4259-9d6e-dc7bd79403cf]
+[FFS] 0x002e8140 9ef18cee-d6f2-4156-b6c6-ee98927683c8 runtime      size=0x11c state=f8 d=0 '' [DXE_DEP]
+[FFS] 0x002f8048 9a8cdca9-192e-4bb4-84f3-7031b51b8b9e runtime      size=0x51ab1 state=f8 d=0 '' [GUID_DEFINED guid=ee4e5898-3914-4259-9d6e-dc7bd79403cf]
+[FFS] 0x00349b00 d73e3a45-8bbe-4fb0-8353-576a68db5a43 runtime      size=0x153 state=f8 d=0 '' [GUID_DEFINED guid=ee4e5898-3914-4259-9d6e-dc7bd79403cf]
+[FFS] 0x00349c58 cf4223ed-b302-4858-be95-873da1f6d1c7 runtime      size=0xbffb state=f8 d=0 '' [GUID_DEFINED guid=ee4e5898-3914-4259-9d6e-dc7bd79403cf]
+[FFS] 0x00355c58 fd61474c-c55a-42bc-acdd-7f1551535154 runtime      size=0x4a90 state=f8 d=0 '' [GUID_DEFINED guid=ee4e5898-3914-4259-9d6e-dc7bd79403cf]
+[FFS] 0x0035a6e8 8c08e40c-1d32-4978-9fe2-5a24e5862be3 runtime      size=0x82c4 state=f8 d=0 '' [GUID_DEFINED guid=ee4e5898-3914-4259-9d6e-dc7bd79403cf]
+[FFS] 0x003629b0 1edf0f24-dd5e-41d6-88e6-3b6956a0dcaa runtime      size=0x6abe0 state=f8 d=0 '' [GUID_DEFINED guid=ee4e5898-3914-4259-9d6e-dc7bd79403cf]
+[FFS] 0x003cd590 a23e09c4-d839-4480-ac0e-99e4d9871665 runtime      size=0x4a90 state=f8 d=0 '' [GUID_DEFINED guid=ee4e5898-3914-4259-9d6e-dc7bd79403cf]
+[FFS] 0x003d2020 a6b3a3fc-c00c-48c2-a1a3-418a5906779c runtime      size=0x153b state=f8 d=0 '' [GUID_DEFINED guid=ee4e5898-3914-4259-9d6e-dc7bd79403cf]
+[FFS] 0x00550048 ffffffff-ffff-ffff-ffff-ffffffffffff pad          size=0x2c state=f8 d=0 '' []
+[FFS] 0x00550078 1b45cc0a-156a-428a-af62-49864da0e6e6 runtime      size=0x3c state=f8 d=0 '' [DXE_DEP]
+[FFS] 0x005500b8 ffffffff-ffff-ffff-ffff-ffffffffffff pad          size=0x30 state=f8 d=0 '' []
+[FFS] 0x005500e8 bb9d2f77-e1fd-4451-a946-6e868d216e4d dxe_core     size=0x39e10 state=00 d=0 'PlatformNotifyDispatchPei' [FIRMWARE_VERSION2, DXE_DEP, PE32, UI name='PlatformNotifyDispatchPei', FIRMWARE_VERSION]
+[FFS] 0x006c0048 ffffffff-ffff-ffff-ffff-ffffffffffff pad          size=0x2c state=f8 d=0 '' []
+[FFS] 0x006c0078 1b45cc0a-156a-428a-af62-49864da0e6e6 runtime      size=0x3c state=f8 d=0 '' [DXE_DEP]
+[FFS] 0x006c00b8 ffffffff-ffff-ffff-ffff-ffffffffffff pad          size=0x30 state=f8 d=0 '' []
+[FFS] 0x006c00e8 bb9d2f77-e1fd-4451-a946-6e868d216e4d dxe_core     size=0x39e10 state=00 d=0 'PlatformNotifyDispatchPei' [FIRMWARE_VERSION2, DXE_DEP, PE32, UI name='PlatformNotifyDispatchPei', FIRMWARE_VERSION]
+[FFS] 0x007ff048 ffffffff-ffff-ffff-ffff-ffffffffffff pad          size=0x20 state=f8 d=0 '' []
+[i] lzma sections that failed to decode: 9
+[i] extracted bodies -> build\extracted

@@ -1,3 +1,18 @@
+# IDE
 /.idea
+/.vscode
+/proprietary tools
 /plans
+
+# Прошивки: содержат серийники и ключы Windows — не коммитим
 /bios-dumps
+*.fd
+*.rom
+*.bin
+
+# Внешние тулчейны и артефакты сборки
+/vendor
+/edk2-workspace
+/build
+__pycache__/
+*.pyc

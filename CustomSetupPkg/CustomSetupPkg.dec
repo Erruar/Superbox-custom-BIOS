@@ -1,0 +1,20 @@
+##
+# Custom graphical setup UI for InsydeH2O firmware.
+# Prototype stage: standalone UEFI application, later injected as a module.
+#
+
+[Defines]
+  DEC_SPECIFICATION = 0x0001001B
+  PACKAGE_NAME      = CustomSetupPkg
+  PACKAGE_GUID      = 3c9f7d21-8ab4-4f0e-9c31-5d7e2a6b4108
+  PACKAGE_VERSION   = 0.1
+
+[Includes]
+  Include
+
+[LibraryClasses]
+
+[Guids]
+  gH2oSetupTokenSpaceGuid = { 0x3c9f7d21, 0x8ab4, 0x4f0e, { 0x9c, 0x31, 0x5d, 0x7e, 0x2a, 0x6b, 0x41, 0x08 } }
+
+[Protocols]
