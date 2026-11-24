@@ -25,20 +25,27 @@ H2oSetupMain (
   INT32         CursorX, CursorY;
   UINTN         Index;
 
-  SbLog ("[main] enter", 0, 0);
+  SbLog ("[h2osetup] enter", 0, 0);
 
   Status = GfxInit ();
-  SbLog ("[main] gfx init", (UINTN)Status, 0);
   if (EFI_ERROR (Status)) {
     Print (L"H2oSetup: no usable graphics output (%r)\n", Status);
     return Status;
   }
 
   InputInit ();
-  SbLog ("[main] input init", 0, 0);
 
   Status = ModelInit ();
-  SbLog ("[main] model init", (UINTN)Status, (UINTN)ModelFormsets ());
+  {
+    UINTN  Count = 0;
+    FORMSET  *F;
+
+    for (F = ModelFormsets (); F != NULL; F = F->Next) {
+      Count++;
+    }
+    SbLog ("[h2osetup] gfx", GfxWidth (), GfxHeight ());
+    SbLog ("[h2osetup] formsets", Count, (UINTN)Status);
+  }
   if (EFI_ERROR (Status) || (ModelFormsets () == NULL)) {
     GfxClear (COL_BG);
     GfxText (PAD_TEXT (), PAD_TEXT (),
