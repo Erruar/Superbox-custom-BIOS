@@ -63,9 +63,9 @@ ConnectPointerDevice (
   IN EFI_GUID  *ProtocolGuid
   )
 {
-  EFI_HANDLE             *Handles;
-  EFI_STATUS             Status;
-  UINTN                  Index, Count;
+  EFI_HANDLE                *Handles;
+  EFI_STATUS                Status;
+  UINTN                     Index, Count;
   EFI_DEVICE_PATH_PROTOCOL  *Dp;
 
   Handles = NULL;
@@ -81,6 +81,21 @@ ConnectPointerDevice (
                        &gEfiDevicePathProtocolGuid, (VOID **)&Dp)) &&
         (Dp != NULL)) {
       gBS->ConnectController (Dp, NULL, NULL, TRUE);
+
+      /* identify the device by its path node types (type<<8|subtype) */
+      {
+        EFI_DEVICE_PATH_PROTOCOL  *Node = Dp;
+        UINTN                     Guard = 0;
+
+        while (!IsDevicePathEnd (Node) && (Guard++ < 8)) {
+          SbLog ("[input] dp node",
+                 (DevicePathType (Node) << 8) | DevicePathSubType (Node),
+                 Guard);
+          Node = NextDevicePathNode (Node);
+        }
+      }
+    } else {
+      SbLog ("[input] connect nodevpath", 0, Index);
     }
   }
   FreePool (Handles);
@@ -112,6 +127,22 @@ InputInit (
   if ((mSp == NULL) && (mAp == NULL)) {
     Print (L"[input] no pointer protocol found - keyboard only\n");
   }
+
+  /* One-shot probe: report what each published instance says about itself. */
+  {
+    EFI_SIMPLE_POINTER_STATE    SpState;
+    EFI_ABSOLUTE_POINTER_STATE  ApState;
+
+    if (mSp != NULL) {
+      SbLog ("[input] sp probe", (UINTN)mSp->GetState (mSp, &SpState), 0);
+    }
+    if (mAp != NULL) {
+      SbLog ("[input] ap probe", (UINTN)mAp->GetState (mAp, &ApState), 0);
+      SbLog ("[input] ap range", (UINTN)mAp->Mode->AbsoluteMaxX,
+             (UINTN)mAp->Mode->AbsoluteMaxY);
+    }
+  }
+
   SbLog ("[input] init sp/ap", (UINTN)mSp, (UINTN)mAp);
 
   return EFI_SUCCESS;
@@ -200,6 +231,8 @@ PollAbsolutePointer (
   EFI_ABSOLUTE_POINTER_STATE  State;
   EFI_STATUS                  Status;
   UINT64                      RangeX, RangeY;
+  STATIC UINTN                mApErrLog = 0;
+  STATIC UINTN                mApTrace  = 0;
 
   if (mAp == NULL) {
     return EV_NONE;
@@ -207,7 +240,14 @@ PollAbsolutePointer (
 
   Status = mAp->GetState (mAp, &State);
   if (EFI_ERROR (Status)) {
+    if (mApErrLog++ < 4) {
+      SbLog ("[input] abs getstate", (UINTN)Status, 0);
+    }
     return EV_NONE;
+  }
+
+  if (mApTrace++ < 40) {
+    SbLog ("[input] abs state", (UINTN)State.CurrentX, (UINTN)State.CurrentY);
   }
 
   RangeX = mAp->Mode->AbsoluteMaxX - mAp->Mode->AbsoluteMinX;

@@ -20,6 +20,7 @@
 #include <Library/UefiLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
+#include <Library/DevicePathLib.h>
 #include <Uefi/UefiInternalFormRepresentation.h>
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/HiiDatabase.h>
