@@ -38,3 +38,4 @@
   gEfiSimplePointerProtocolGuid             ## CONSUMES
   gEfiAbsolutePointerProtocolGuid           ## CONSUMES
   gEfiSimpleTextInProtocolGuid              ## CONSUMES
+  gEfiDevicePathProtocolGuid                ## CONSUMES

@@ -30,6 +30,7 @@
 #include <Protocol/SimplePointer.h>
 #include <Protocol/AbsolutePointer.h>
 #include <Protocol/SimpleTextIn.h>
+#include <Protocol/DevicePath.h>
 
 /*
  * Tiny serial tracer: EDK2's AsciiSPrint is not pulled in by this module,

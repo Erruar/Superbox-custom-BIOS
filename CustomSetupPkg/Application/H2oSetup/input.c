@@ -51,6 +51,41 @@ InputGetCursor (
   *Y = mY;
 }
 
+/*
+ * A pointer protocol can be published by a bus driver whose child device is
+ * not connected yet (OVMF/QEMU enumerate USB late).  GetState then returns
+ * EFI_DEVICE_ERROR, so walk the protocol's device path back to its controller
+ * and connect it once.
+ */
+STATIC
+VOID
+ConnectPointerDevice (
+  IN EFI_GUID  *ProtocolGuid
+  )
+{
+  EFI_HANDLE             *Handles;
+  EFI_STATUS             Status;
+  UINTN                  Index, Count;
+  EFI_DEVICE_PATH_PROTOCOL  *Dp;
+
+  Handles = NULL;
+  Status  = gBS->LocateHandleBuffer (
+                   ByProtocol, ProtocolGuid, NULL, &Count, &Handles);
+  if (EFI_ERROR (Status) || (Count == 0)) {
+    return;
+  }
+
+  for (Index = 0; Index < Count; Index++) {
+    Dp = NULL;
+    if (!EFI_ERROR (gBS->HandleProtocol (Handles[Index],
+                       &gEfiDevicePathProtocolGuid, (VOID **)&Dp)) &&
+        (Dp != NULL)) {
+      gBS->ConnectController (Dp, NULL, NULL, TRUE);
+    }
+  }
+  FreePool (Handles);
+}
+
 EFI_STATUS
 InputInit (
   VOID
@@ -60,6 +95,9 @@ InputInit (
 
   mX = (INT32)GfxWidth () / 2;
   mY = (INT32)GfxHeight () / 2;
+
+  ConnectPointerDevice (&gEfiSimplePointerProtocolGuid);
+  ConnectPointerDevice (&gEfiAbsolutePointerProtocolGuid);
 
   Status = gBS->LocateProtocol (&gEfiSimplePointerProtocolGuid, NULL, (VOID **)&mSp);
   if (EFI_ERROR (Status)) {
