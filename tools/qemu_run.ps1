@@ -26,7 +26,9 @@ if (-not (Test-Path "$Repo\build\H2oSetup.efi")) { throw 'no build\H2oSetup.efi,
 $Extra = @(
     "$Repo\build\H2oSetup.efi=BOOTX64.EFI"
     "$Repo\build\UsbMouseDxe.efi=MOUSEDXE.EFI"
-    "$Repo\build\UsbMouseAbsolutePointerDxe.efi=ABSDXEDXE.EFI"
+    "$Repo\build\UsbMouseAbsolutePointerDxe.efi=ABSDXE.EFI"
+    "$Repo\build\SbPointerInfo.efi=SBPINFO.EFI"
+    "$Repo\build\VirtioInputDxe.efi=VIRTIN.EFI"
 )
 $Extra = $Extra | Where-Object { (Test-Path ($_ -split '=')[0]) }
 $env:MKFAT_NSH = "$Repo\tools\startup.nsh"
@@ -53,7 +55,7 @@ $args = @(
     '-device', 'ich9-usb-uhci1,masterbus=usb.0,firstport=2,multifunction=on',
     '-device', 'ich9-usb-uhci1,masterbus=usb.0,firstport=4,multifunction=on',
     '-device', 'usb-tablet,bus=usb.0,port=2',
-    '-device', 'usb-mouse,bus=usb.0,port=3',
+    '-device', 'virtio-tablet-pci',
     '-serial', "file:$Work\serial.log",
     '-net', 'none',
     '-monitor', 'none',

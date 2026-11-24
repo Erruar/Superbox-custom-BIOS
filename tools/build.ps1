@@ -53,7 +53,7 @@ if ($Out) {
 }
 
 # QEMU helper drivers (the stock OVMF image has no USB mouse support)
-foreach ($name in 'UsbMouseDxe.efi', 'UsbMouseAbsolutePointerDxe.efi') {
+foreach ($name in 'UsbMouseDxe.efi', 'UsbMouseAbsolutePointerDxe.efi', 'SbPointerInfo.efi', 'VirtioInputDxe.efi') {
     $Drv = Get-ChildItem "$Workspace\Build" -Recurse -Filter $name -EA SilentlyContinue |
            Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($Drv) {

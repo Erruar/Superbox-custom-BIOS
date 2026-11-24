@@ -51,9 +51,6 @@ fi
 "$PYTHON_COMMAND" "$(cygpath -u "$(dirname "$0")")/edk2_patch_buildpy.py" \
   BaseTools/Source/Python/build/build.py
 
-# instrument the workspace copy of the stock USB mouse drivers (QEMU harness)
-"$PYTHON_COMMAND" "$(cygpath -u "$(dirname "$0")")/edk2_patch_mouse.py" "$WS_UNIX/edk2"
-
 # edksetup.sh rewrites WORKSPACE to a POSIX path; restore the Windows form,
 # and pre-create Conf/ so it is not regenerated inside C:/msys64.
 mkdir -p "$WS_UNIX/Conf"
