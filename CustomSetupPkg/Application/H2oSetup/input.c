@@ -19,6 +19,10 @@ STATIC BOOLEAN mRightDown = FALSE;
 STATIC BOOLEAN mTouchDown = FALSE;
 STATIC INT32   mWheel     = 0;
 
+STATIC UINT64  mApLastX       = 0;
+STATIC UINT64  mApLastY       = 0;
+STATIC UINT32  mApLastButtons = 0;
+
 VOID
 InputSetCursor (
   IN INT32  X,
@@ -74,6 +78,7 @@ InputInit (
   if ((mSp == NULL) && (mAp == NULL)) {
     Print (L"[input] no pointer protocol found - keyboard only\n");
   }
+  SbLog ("[input] init sp/ap", (UINTN)mSp, (UINTN)mAp);
 
   return EFI_SUCCESS;
 }
@@ -109,6 +114,8 @@ PollSimplePointer (
     if (EFI_ERROR (Status)) {
       break;
     }
+    SbLog ("[input] sp state", (UINTN)State.RelativeMovementX,
+           (UINTN)State.RelativeMovementY);
 
     if ((State.RelativeMovementX != 0) || (State.RelativeMovementY != 0)) {
       InputSetCursor (mX + State.RelativeMovementX, mY + State.RelativeMovementY);
@@ -171,6 +178,14 @@ PollAbsolutePointer (
     return EV_NONE;
   }
 
+  if ((mApLastX != State.CurrentX) || (mApLastY != State.CurrentY) ||
+      (mApLastButtons != State.ActiveButtons)) {
+    SbLog ("[input] abs state", (UINTN)State.CurrentX, (UINTN)State.CurrentY);
+    mApLastX       = State.CurrentX;
+    mApLastY       = State.CurrentY;
+    mApLastButtons = State.ActiveButtons;
+  }
+
   RangeX = mAp->Mode->AbsoluteMaxX - mAp->Mode->AbsoluteMinX;
   RangeY = mAp->Mode->AbsoluteMaxY - mAp->Mode->AbsoluteMinY;
 
@@ -206,13 +221,18 @@ InputPoll (
 
   ZeroMem (Event, sizeof (*Event));
 
-  /* Keyboard has priority so that key repeat feels responsive. */
-  if ((gST->ConIn != NULL) && (gST->ConIn->WaitForKey != NULL)) {
-    Status = gBS->CheckEvent (gST->ConIn->WaitForKey);
-    if (!Status) {
-      if (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Event->Key))) {
-        return EV_KEY;
-      }
+  /*
+   * Keyboard has priority so that key repeat feels responsive.  The ConIn
+   * instance handed to an application is a shell text-input agent whose
+   * WaitForKey event may report EFI_DEVICE_ERROR for CheckEvent, so the
+   * keystroke queue is polled directly.
+   */
+  if (gST->ConIn != NULL) {
+    Status = gST->ConIn->ReadKeyStroke (gST->ConIn, &Event->Key);
+    if (!EFI_ERROR (Status)) {
+      SbLog ("[input] key", Event->Key.ScanCode, Event->Key.UnicodeChar);
+      Event->Type = EV_KEY;
+      return EV_KEY;
     }
   }
 

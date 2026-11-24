@@ -378,11 +378,13 @@ GfxInit (
 
   Status = gBS->LocateProtocol (
                   &gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&mGop);
+  SbLog ("[gfx] locate gop", (UINTN)Status, (UINTN)mGop);
   if (EFI_ERROR (Status) || (mGop == NULL) || (mGop->Mode == NULL)) {
     return EFI_NOT_FOUND;
   }
 
   gBS->LocateProtocol (&gEfiHiiFontProtocolGuid, NULL, (VOID **)&mFont);
+  SbLog ("[gfx] locate font", (UINTN)mFont, 0);
   if (mFont == NULL) {
     Print (L"[gfx] EFI_HII_FONT_PROTOCOL not found - text will be boxes\n");
   }
@@ -408,6 +410,7 @@ GfxInit (
   }
 
   if (Best != mGop->Mode->Mode) {
+    SbLog ("[gfx] set mode", Best, BestArea);
     Status = mGop->SetMode (mGop, Best);
     if (EFI_ERROR (Status)) {
       Print (L"[gfx] SetMode(%d) failed: %r\n", Best, Status);
@@ -445,6 +448,7 @@ GfxInit (
   mCurX = (INT32)(mWidth / 2);
   mCurY = (INT32)(mHeight / 2);
 
+  SbLog ("[gfx] done", mWidth, mHeight);
   GfxClear (COL_BG);
   return EFI_SUCCESS;
 }

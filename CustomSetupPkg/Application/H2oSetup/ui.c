@@ -680,6 +680,7 @@ UiDraw (
   )
 {
   GfxClear (COL_BG);
+  SbLog ("[ui] draw", mSel, mRowCount);
   DrawHeader ();
   DrawList ();
   DrawFooter ();
@@ -784,6 +785,7 @@ MoveSelection (
     mSel = (mSel + (UINTN)Direction + mRowCount) % mRowCount;
     Guard++;
   } while (!IsSelectable (mRows[mSel]) && (Guard < mRowCount));
+  SbLog ("[ui] move sel", mSel, mRowCount);
 }
 
 STATIC
