@@ -902,8 +902,6 @@ UiEvent (
   IN INPUT_EVENT  *E
   )
 {
-  SbLog ("[ui] event", (UINTN)E->Type, (UINTN)E->X * 10000 + (UINTN)E->Y);
-
   if (E->Type == EV_MOVE) {
     return;
   }

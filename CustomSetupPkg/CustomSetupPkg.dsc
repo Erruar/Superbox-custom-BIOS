@@ -36,6 +36,7 @@
   UefiDriverEntryPoint|MdePkg/Library/UefiDriverEntryPoint/UefiDriverEntryPoint.inf
   UefiUsbLib|MdePkg/Library/UefiUsbLib/UefiUsbLib.inf
   ReportStatusCodeLib|MdeModulePkg/Library/DxeReportStatusCodeLib/DxeReportStatusCodeLib.inf
+  VirtioLib|OvmfPkg/Library/VirtioLib/VirtioLib.inf
   StackCheckLib|MdePkg/Library/StackCheckLib/StackCheckLib.inf
   StackCheckFailureHookLib|MdePkg/Library/StackCheckFailureHookLibNull/StackCheckFailureHookLibNull.inf
 
@@ -45,6 +46,7 @@
 
 [Components]
   CustomSetupPkg/Application/H2oSetup/H2oSetup.inf
+  CustomSetupPkg/Application/SbPointerInfo/SbPointerInfo.inf
 
   #
   # Stock pointer drivers, not part of the QEMU OVMF image.  They are built
@@ -53,3 +55,10 @@
   #
   MdeModulePkg/Bus/Usb/UsbMouseDxe/UsbMouseDxe.inf
   MdeModulePkg/Bus/Usb/UsbMouseAbsolutePointerDxe/UsbMouseAbsolutePointerDxe.inf
+
+  #
+  # VirtIO input driver: QEMU's virtio-tablet-pci is the only pointer device
+  # whose events the QMP input harness can route through OVMF.  Not present
+  # in the QEMU OVMF build, so we ship and load it ourselves.
+  #
+  OvmfPkg/VirtioInputDxe/VirtioInput.inf

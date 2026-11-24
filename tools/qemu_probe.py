@@ -155,7 +155,9 @@ class Qmp:
             time.sleep(0.15)
 
     def char(self, ch):
-        if ch.isalpha():
+        if ch == '\n':
+            self.press_named('ret')
+        elif ch.isalpha():
             self.press_named(ch.lower(), shift=ch.isupper())
         elif ch.isdigit():
             self.press_named(ch)

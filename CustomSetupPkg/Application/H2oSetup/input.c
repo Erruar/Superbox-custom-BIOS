@@ -1,17 +1,34 @@
 /*
  * input.c - pointer and keyboard front-end.
  *
- * The firmware already ships USB/PS2 mouse and I2C touch drivers, so the UI
- * only consumes the standard pointer protocols:
+ * The UI consumes the standard pointer protocols:
+ *   EFI_ABSOLUTE_POINTER_PROTOCOL  - absolute devices (touch panel, QEMU
+ *                                    virtio tablet)
  *   EFI_SIMPLE_POINTER_PROTOCOL    - relative devices (USB/PS2 mouse)
- *   EFI_ABSOLUTE_POINTER_PROTOCOL  - absolute devices (touch panel)
- * Keyboard input comes from the standard ConIn SimpleTextIn instance.
+ *
+ * Firmware often publishes several pointer instances (built-in virtio input,
+ * USB drivers bound late, broken stubs from the BDS).  LocateProtocol picks
+ * an arbitrary one, so the module enumerates all instances, probes them, and
+ * uses the healthy ones, falling over to the next instance when a device
+ * starts returning EFI_DEVICE_ERROR.
+ *
+ * Keyboard input comes from the standard ConIn SimpleTextIn instance.  The
+ * instance handed to an application started from the shell is a text-input
+ * agent whose WaitForKey event reports EFI_DEVICE_ERROR for CheckEvent, so
+ * the keystroke queue is polled directly.
  */
 
 #include "H2oSetup.h"
 
-STATIC EFI_SIMPLE_POINTER_PROTOCOL   *mSp   = NULL;
-STATIC EFI_ABSOLUTE_POINTER_PROTOCOL *mAp   = NULL;
+#define MAX_POINTER_INSTANCES  8
+
+STATIC EFI_ABSOLUTE_POINTER_PROTOCOL  *mAbs[MAX_POINTER_INSTANCES];
+STATIC UINTN                          mAbsCount;
+STATIC UINTN                          mAbsActive;
+
+STATIC EFI_SIMPLE_POINTER_PROTOCOL    *mRel[MAX_POINTER_INSTANCES];
+STATIC UINTN                          mRelCount;
+STATIC UINTN                          mRelActive;
 
 STATIC INT32   mX, mY;
 STATIC BOOLEAN mLeftDown  = FALSE;
@@ -52,14 +69,67 @@ InputGetCursor (
 }
 
 /*
- * A pointer protocol can be published by a bus driver whose child device is
- * not connected yet (OVMF/QEMU enumerate USB late).  GetState then returns
- * EFI_DEVICE_ERROR, so walk the protocol's device path back to its controller
- * and connect it once.
+ * Collect every instance of a pointer protocol, probing each once.  An
+ * instance answering EFI_SUCCESS or EFI_NOT_READY is usable; anything else
+ * (DEVICE_ERROR from an unconnected stub) is skipped.
  */
 STATIC
 VOID
-ConnectPointerDevice (
+CollectPointers (
+  IN  EFI_GUID      *Guid,
+  IN  BOOLEAN       IsAbsolute,
+  OUT VOID          **Slots,
+  OUT UINTN         *Count
+  )
+{
+  EFI_HANDLE  *Handles;
+  EFI_STATUS  Status;
+  UINTN       Index, Total;
+  VOID        *Proto;
+
+  *Count = 0;
+  Handles = NULL;
+  Status  = gBS->LocateHandleBuffer (ByProtocol, Guid, NULL, &Total, &Handles);
+  if (EFI_ERROR (Status)) {
+    return;
+  }
+
+  for (Index = 0; (Index < Total) && (*Count < MAX_POINTER_INSTANCES); Index++) {
+    Proto = NULL;
+    if (EFI_ERROR (gBS->HandleProtocol (Handles[Index], Guid, &Proto)) ||
+        (Proto == NULL)) {
+      continue;
+    }
+
+    if (IsAbsolute) {
+      EFI_ABSOLUTE_POINTER_STATE  St;
+
+      Status = ((EFI_ABSOLUTE_POINTER_PROTOCOL *)Proto)->GetState (
+                                                        (EFI_ABSOLUTE_POINTER_PROTOCOL *)Proto, &St);
+    } else {
+      EFI_SIMPLE_POINTER_STATE  St;
+
+      Status = ((EFI_SIMPLE_POINTER_PROTOCOL *)Proto)->GetState (
+                                                       (EFI_SIMPLE_POINTER_PROTOCOL *)Proto, &St);
+    }
+
+    if ((Status == EFI_SUCCESS) || (Status == EFI_NOT_READY)) {
+      Slots[(*Count)++] = Proto;
+    }
+  }
+
+  FreePool (Handles);
+}
+
+/*
+ * Pointer protocols can be published before their backing device is
+ * connected (ConSplitter aggregates a virtio/USB device that BDS never
+ * started).  Connect every controller that appears in a pointer device path
+ * so real hardware drivers bind before we probe the instances.
+ */
+STATIC
+VOID
+ConnectPointerControllers (
   IN EFI_GUID  *ProtocolGuid
   )
 {
@@ -71,7 +141,7 @@ ConnectPointerDevice (
   Handles = NULL;
   Status  = gBS->LocateHandleBuffer (
                    ByProtocol, ProtocolGuid, NULL, &Count, &Handles);
-  if (EFI_ERROR (Status) || (Count == 0)) {
+  if (EFI_ERROR (Status)) {
     return;
   }
 
@@ -81,21 +151,6 @@ ConnectPointerDevice (
                        &gEfiDevicePathProtocolGuid, (VOID **)&Dp)) &&
         (Dp != NULL)) {
       gBS->ConnectController (Dp, NULL, NULL, TRUE);
-
-      /* identify the device by its path node types (type<<8|subtype) */
-      {
-        EFI_DEVICE_PATH_PROTOCOL  *Node = Dp;
-        UINTN                     Guard = 0;
-
-        while (!IsDevicePathEnd (Node) && (Guard++ < 8)) {
-          SbLog ("[input] dp node",
-                 (DevicePathType (Node) << 8) | DevicePathSubType (Node),
-                 Guard);
-          Node = NextDevicePathNode (Node);
-        }
-      }
-    } else {
-      SbLog ("[input] connect nodevpath", 0, Index);
     }
   }
   FreePool (Handles);
@@ -106,44 +161,25 @@ InputInit (
   VOID
   )
 {
-  EFI_STATUS  Status;
-
   mX = (INT32)GfxWidth () / 2;
   mY = (INT32)GfxHeight () / 2;
 
-  ConnectPointerDevice (&gEfiSimplePointerProtocolGuid);
-  ConnectPointerDevice (&gEfiAbsolutePointerProtocolGuid);
+  ConnectPointerControllers (&gEfiAbsolutePointerProtocolGuid);
+  ConnectPointerControllers (&gEfiSimplePointerProtocolGuid);
 
-  Status = gBS->LocateProtocol (&gEfiSimplePointerProtocolGuid, NULL, (VOID **)&mSp);
-  if (EFI_ERROR (Status)) {
-    mSp = NULL;
+  mAbsActive = 0;
+  mRelActive = 0;
+  CollectPointers (&gEfiAbsolutePointerProtocolGuid, TRUE,
+                   (VOID **)mAbs, &mAbsCount);
+  CollectPointers (&gEfiSimplePointerProtocolGuid, FALSE,
+                   (VOID **)mRel, &mRelCount);
+
+  SbLog ("[input] abs ok", mAbsCount, (UINTN)(mAbsCount ? mAbs[0] : 0));
+  SbLog ("[input] rel ok", mRelCount, (UINTN)(mRelCount ? mRel[0] : 0));
+
+  if ((mAbsCount == 0) && (mRelCount == 0)) {
+    Print (L"[input] no usable pointer - keyboard only\n");
   }
-
-  Status = gBS->LocateProtocol (&gEfiAbsolutePointerProtocolGuid, NULL, (VOID **)&mAp);
-  if (EFI_ERROR (Status)) {
-    mAp = NULL;
-  }
-
-  if ((mSp == NULL) && (mAp == NULL)) {
-    Print (L"[input] no pointer protocol found - keyboard only\n");
-  }
-
-  /* One-shot probe: report what each published instance says about itself. */
-  {
-    EFI_SIMPLE_POINTER_STATE    SpState;
-    EFI_ABSOLUTE_POINTER_STATE  ApState;
-
-    if (mSp != NULL) {
-      SbLog ("[input] sp probe", (UINTN)mSp->GetState (mSp, &SpState), 0);
-    }
-    if (mAp != NULL) {
-      SbLog ("[input] ap probe", (UINTN)mAp->GetState (mAp, &ApState), 0);
-      SbLog ("[input] ap range", (UINTN)mAp->Mode->AbsoluteMaxX,
-             (UINTN)mAp->Mode->AbsoluteMaxY);
-    }
-  }
-
-  SbLog ("[input] init sp/ap", (UINTN)mSp, (UINTN)mAp);
 
   return EFI_SUCCESS;
 }
@@ -153,48 +189,58 @@ InputExit (
   VOID
   )
 {
-  mSp = NULL;
-  mAp = NULL;
+  mAbsCount = 0;
+  mRelCount = 0;
 }
 
-/* Poll the relative device (USB/PS2 mouse). */
+/* Poll the active relative device; hop to the next instance when it dies. */
 STATIC
 UINT32
 PollSimplePointer (
   OUT INPUT_EVENT  *Event
   )
 {
-  EFI_SIMPLE_POINTER_STATE  State;
-  EFI_STATUS                Status;
-  UINT32                    Type  = EV_NONE;
-  BOOLEAN                   Moved = FALSE;
-  INT32                     Wheel = 0;
+  EFI_SIMPLE_POINTER_PROTOCOL  *Sp;
+  EFI_SIMPLE_POINTER_STATE     State;
+  EFI_STATUS                   Status;
+  UINT32                       Type  = EV_NONE;
+  BOOLEAN                      Moved = FALSE;
+  INT32                        Wheel = 0;
+  UINTN                        Try;
 
-  if (mSp == NULL) {
+  if (mRelCount == 0) {
     return EV_NONE;
   }
 
-  while (TRUE) {
-    Status = mSp->GetState (mSp, &State);
-    if (EFI_ERROR (Status)) {
-      break;
-    }
+  for (Try = 0; Try < mRelCount; Try++) {
+    Sp = mRel[mRelActive];
+    do {
+      Status = Sp->GetState (Sp, &State);
+      if (Status == EFI_NOT_READY) {
+        break;
+      }
+      if (EFI_ERROR (Status)) {
+        // broken instance: try the next one on the next round
+        mRelActive = (mRelActive + 1) % mRelCount;
+        break;
+      }
 
-    if ((State.RelativeMovementX != 0) || (State.RelativeMovementY != 0)) {
-      InputSetCursor (mX + State.RelativeMovementX, mY + State.RelativeMovementY);
-      Moved = TRUE;
-    }
-    Wheel += State.RelativeMovementZ;
+      if ((State.RelativeMovementX != 0) || (State.RelativeMovementY != 0)) {
+        InputSetCursor (mX + State.RelativeMovementX, mY + State.RelativeMovementY);
+        Moved = TRUE;
+      }
+      Wheel += State.RelativeMovementZ;
 
-    if (State.LeftButton && !mLeftDown) {
-      Type       = EV_LCLICK;
-    } else if (State.RightButton && !mRightDown) {
-      Type       = EV_RCLICK;
-    }
-    mLeftDown  = State.LeftButton;
-    mRightDown = State.RightButton;
+      if (State.LeftButton && !mLeftDown) {
+        Type = EV_LCLICK;
+      } else if (State.RightButton && !mRightDown) {
+        Type = EV_RCLICK;
+      }
+      mLeftDown  = State.LeftButton;
+      mRightDown = State.RightButton;
+    } while (Type == EV_NONE && !EFI_ERROR (Status));
 
-    if (Type != EV_NONE) {
+    if ((Type != EV_NONE) || Moved) {
       break;
     }
   }
@@ -203,16 +249,13 @@ PollSimplePointer (
   Event->X = mX;
   Event->Y = mY;
 
-  if (Type == EV_LCLICK) {
-    return Type;
-  }
-  if (Type == EV_RCLICK) {
-    return Type;
-  }
   if ((mWheel >= 2) || (mWheel <= -2)) {
     Event->Wheel = mWheel > 0 ? 1 : -1;
     mWheel       = 0;
     return EV_WHEEL;
+  }
+  if (Type != EV_NONE) {
+    return Type;
   }
   if (Moved) {
     return EV_MOVE;
@@ -221,58 +264,67 @@ PollSimplePointer (
   return EV_NONE;
 }
 
-/* Poll the absolute device (touch panel). */
+/* Poll the active absolute device; hop to the next instance when it dies. */
 STATIC
 UINT32
 PollAbsolutePointer (
   OUT INPUT_EVENT  *Event
   )
 {
-  EFI_ABSOLUTE_POINTER_STATE  State;
-  EFI_STATUS                  Status;
-  UINT64                      RangeX, RangeY;
-  STATIC UINTN                mApErrLog = 0;
-  STATIC UINTN                mApTrace  = 0;
+  EFI_ABSOLUTE_POINTER_PROTOCOL  *Ap;
+  EFI_ABSOLUTE_POINTER_STATE     State;
+  EFI_STATUS                     Status;
+  UINT64                         RangeX, RangeY;
+  UINTN                          Try;
+  UINT32                         Type = EV_NONE;
 
-  if (mAp == NULL) {
+  if (mAbsCount == 0) {
     return EV_NONE;
   }
 
-  Status = mAp->GetState (mAp, &State);
-  if (EFI_ERROR (Status)) {
-    if (mApErrLog++ < 4) {
-      SbLog ("[input] abs getstate", (UINTN)Status, 0);
+  for (Try = 0; Try < mAbsCount; Try++) {
+    Ap = mAbs[mAbsActive];
+    Status = Ap->GetState (Ap, &State);
+    if (Status == EFI_NOT_READY) {
+      break;
     }
-    return EV_NONE;
-  }
-
-  if (mApTrace++ < 40) {
-    SbLog ("[input] abs state", (UINTN)State.CurrentX, (UINTN)State.CurrentY);
-  }
-
-  RangeX = mAp->Mode->AbsoluteMaxX - mAp->Mode->AbsoluteMinX;
-  RangeY = mAp->Mode->AbsoluteMaxY - mAp->Mode->AbsoluteMinY;
-
-  if (RangeX != 0) {
-    mX = (INT32)(((State.CurrentX - mAp->Mode->AbsoluteMinX) * (GfxWidth () - 1)) / RangeX);
-  }
-  if (RangeY != 0) {
-    mY = (INT32)(((State.CurrentY - mAp->Mode->AbsoluteMinY) * (GfxHeight () - 1)) / RangeY);
-  }
-
-  Event->X = mX;
-  Event->Y = mY;
-
-  if ((State.ActiveButtons & EFI_ABSP_TouchActive) != 0) {
-    if (!mTouchDown) {
-      mTouchDown = TRUE;
-      return EV_LCLICK;
+    if (EFI_ERROR (Status)) {
+      /* Some firmware pointer stacks go stale; a reset revives them. */
+      Ap->Reset (Ap, TRUE);
+      mAbsActive = (mAbsActive + 1) % mAbsCount;
+      continue;
     }
-  } else {
-    mTouchDown = FALSE;
+
+    RangeX = Ap->Mode->AbsoluteMaxX - Ap->Mode->AbsoluteMinX;
+    RangeY = Ap->Mode->AbsoluteMaxY - Ap->Mode->AbsoluteMinY;
+
+    if (RangeX != 0) {
+      mX = (INT32)(((State.CurrentX - Ap->Mode->AbsoluteMinX) *
+                    (INT64)(GfxWidth () - 1)) / (INT64)RangeX);
+    }
+    if (RangeY != 0) {
+      mY = (INT32)(((State.CurrentY - Ap->Mode->AbsoluteMinY) *
+                    (INT64)(GfxHeight () - 1)) / (INT64)RangeY);
+    }
+    InputSetCursor (mX, mY);
+    Event->X = mX;
+    Event->Y = mY;
+
+    if ((State.ActiveButtons & EFI_ABSP_TouchActive) != 0) {
+      if (!mTouchDown) {
+        mTouchDown = TRUE;
+        Type       = EV_LCLICK;
+      } else {
+        Type = EV_MOVE;
+      }
+    } else {
+      mTouchDown = FALSE;
+      Type       = EV_MOVE;
+    }
+    break;
   }
 
-  return EV_MOVE;
+  return Type;
 }
 
 UINT32
@@ -285,28 +337,21 @@ InputPoll (
 
   ZeroMem (Event, sizeof (*Event));
 
-  /*
-   * Keyboard has priority so that key repeat feels responsive.  The ConIn
-   * instance handed to an application is a shell text-input agent whose
-   * WaitForKey event may report EFI_DEVICE_ERROR for CheckEvent, so the
-   * keystroke queue is polled directly.
-   */
   if (gST->ConIn != NULL) {
     Status = gST->ConIn->ReadKeyStroke (gST->ConIn, &Event->Key);
     if (!EFI_ERROR (Status)) {
-      SbLog ("[input] key", Event->Key.ScanCode, Event->Key.UnicodeChar);
       Event->Type = EV_KEY;
       return EV_KEY;
     }
   }
 
-  Type = PollSimplePointer (Event);
+  Type = PollAbsolutePointer (Event);
   if (Type != EV_NONE) {
     Event->Type = Type;
     return Type;
   }
 
-  Type = PollAbsolutePointer (Event);
+  Type = PollSimplePointer (Event);
   if (Type != EV_NONE) {
     Event->Type = Type;
     return Type;
