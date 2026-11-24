@@ -25,6 +25,8 @@ H2oSetupMain (
   INT32         CursorX, CursorY;
   UINTN         Index;
 
+  SerialPortWrite ((UINT8 *)"\r\n[h2osetup] start\r\n", 23);
+
   Status = GfxInit ();
   if (EFI_ERROR (Status)) {
     Print (L"H2oSetup: no usable graphics output (%r)\n", Status);

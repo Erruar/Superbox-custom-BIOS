@@ -27,6 +27,7 @@
   MemoryAllocationLib
   PrintLib
   DebugLib
+  SerialPortLib
 
 [Protocols]
   gEfiGraphicsOutputProtocolGuid            ## CONSUMES
