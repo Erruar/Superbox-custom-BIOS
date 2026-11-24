@@ -19,10 +19,6 @@ STATIC BOOLEAN mRightDown = FALSE;
 STATIC BOOLEAN mTouchDown = FALSE;
 STATIC INT32   mWheel     = 0;
 
-STATIC UINT64  mApLastX       = 0;
-STATIC UINT64  mApLastY       = 0;
-STATIC UINT32  mApLastButtons = 0;
-
 VOID
 InputSetCursor (
   IN INT32  X,
@@ -114,8 +110,6 @@ PollSimplePointer (
     if (EFI_ERROR (Status)) {
       break;
     }
-    SbLog ("[input] sp state", (UINTN)State.RelativeMovementX,
-           (UINTN)State.RelativeMovementY);
 
     if ((State.RelativeMovementX != 0) || (State.RelativeMovementY != 0)) {
       InputSetCursor (mX + State.RelativeMovementX, mY + State.RelativeMovementY);
@@ -176,14 +170,6 @@ PollAbsolutePointer (
   Status = mAp->GetState (mAp, &State);
   if (EFI_ERROR (Status)) {
     return EV_NONE;
-  }
-
-  if ((mApLastX != State.CurrentX) || (mApLastY != State.CurrentY) ||
-      (mApLastButtons != State.ActiveButtons)) {
-    SbLog ("[input] abs state", (UINTN)State.CurrentX, (UINTN)State.CurrentY);
-    mApLastX       = State.CurrentX;
-    mApLastY       = State.CurrentY;
-    mApLastButtons = State.ActiveButtons;
   }
 
   RangeX = mAp->Mode->AbsoluteMaxX - mAp->Mode->AbsoluteMinX;

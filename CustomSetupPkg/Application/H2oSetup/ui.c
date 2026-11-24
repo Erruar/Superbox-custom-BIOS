@@ -664,10 +664,10 @@ DrawFooter (
   GfxFill (0, Y, W, S, COL_LINE);
   GfxText (PAD (), Y + S,
            L"Up/Down move   Enter change   Left/Right step   Tab formset   "
-           L"Esc back   F10 reset", COL_TEXT_DIM, W - 2 * PAD ());
+           L"Esc back", COL_TEXT_DIM, W - 2 * PAD ());
   if (mChanged) {
     /* writes are committed live; the marker just reminds about the reboot */
-    CONST CHAR16  *Mark = L"* F10 saves and reboots";
+    CONST CHAR16  *Mark = L"* F10 reboot";
     INT32          Tw  = GfxTextWidth (Mark);
 
     GfxText (W - PAD () - Tw, Y + S, Mark, COL_VALUE, Tw);
@@ -680,7 +680,6 @@ UiDraw (
   )
 {
   GfxClear (COL_BG);
-  SbLog ("[ui] draw", mSel, mRowCount);
   DrawHeader ();
   DrawList ();
   DrawFooter ();
@@ -785,7 +784,6 @@ MoveSelection (
     mSel = (mSel + (UINTN)Direction + mRowCount) % mRowCount;
     Guard++;
   } while (!IsSelectable (mRows[mSel]) && (Guard < mRowCount));
-  SbLog ("[ui] move sel", mSel, mRowCount);
 }
 
 STATIC
