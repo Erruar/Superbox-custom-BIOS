@@ -51,3 +51,13 @@ if ($Out) {
     Write-Host '[build] no H2oSetup.efi produced - see the build log above'
     exit 1
 }
+
+# QEMU helper drivers (the stock OVMF image has no USB mouse support)
+foreach ($name in 'UsbMouseDxe.efi', 'UsbMouseAbsolutePointerDxe.efi') {
+    $Drv = Get-ChildItem "$Workspace\Build" -Recurse -Filter $name -EA SilentlyContinue |
+           Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($Drv) {
+        Copy-Item $Drv.FullName "$Repo\build\$name" -Force
+        Write-Host "[build] OK: build\$name"
+    }
+}

@@ -23,7 +23,11 @@ if ($Stop) {
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 
 if (-not (Test-Path "$Repo\build\H2oSetup.efi")) { throw 'no build\H2oSetup.efi, run tools\build.ps1 first' }
-& python "$Repo\tools\mkfat.py" "$Work\efi.img" "$Repo\build\H2oSetup.efi"
+$Extra = @()
+foreach ($name in 'UsbMouseDxe.efi', 'UsbMouseAbsolutePointerDxe.efi') {
+    if (Test-Path "$Repo\build\$name") { $Extra += "$Repo\build\$name" }
+}
+& python "$Repo\tools\mkfat.py" "$Work\efi.img" "$Repo\build\H2oSetup.efi" @Extra
 if (-not (Test-Path "$Work\efi.img")) { throw 'mkfat failed' }
 
 Copy-Item $OvmfCode "$Work\OVMF_CODE.fd" -Force

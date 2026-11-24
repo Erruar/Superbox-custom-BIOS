@@ -49,7 +49,19 @@ def dir_entry(name: str, ext: str, attr: int, cluster: int, size: int) -> bytes:
     )
 
 
-def build(image: Path, files: list[Path]) -> None:
+def parse_specs(specs: list[str]) -> list[tuple[Path, str]]:
+    """Each argument is 'path' or 'path=NAME.EXT' (FAT name to use inside)."""
+    out = []
+    for s in specs:
+        if "=" in s:
+            src, _, name = s.partition("=")
+            out.append((Path(src), name.upper()))
+        else:
+            out.append((Path(s), Path(s).name.upper()))
+    return out
+
+
+def build(image: Path, files: list[tuple[Path, str]]) -> None:
     # 128 MiB, the image size the EDK2 FAT driver is happiest with
     sectors = int(os.environ.get("MKFAT_MB", "128")) * 2048
     clusters, fat_sectors, data_start = fat16(sectors)
