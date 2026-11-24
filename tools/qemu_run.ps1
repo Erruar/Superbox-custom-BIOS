@@ -42,6 +42,8 @@ $args = @(
     '-drive', "format=raw,if=none,id=disk0,file=$Work\efi.img",
     '-device', 'ich9-ahci,id=ahci',
     '-device', 'ide-hd,bus=ahci.0,drive=disk0',
+    '-device', 'ich9-usb-ehci1,id=usb',
+    '-device', 'usb-tablet',
     '-serial', "file:$Work\serial.log",
     '-net', 'none',
     '-monitor', 'none',
