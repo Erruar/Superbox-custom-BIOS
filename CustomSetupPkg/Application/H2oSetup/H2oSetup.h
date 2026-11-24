@@ -11,6 +11,14 @@
 #define _H2O_SETUP_H_
 
 #include <Uefi.h>
+#include <Library/BaseLib.h>
+#include <Library/BaseMemoryLib.h>
+#include <Library/MemoryAllocationLib.h>
+#include <Library/PrintLib.h>
+#include <Library/DebugLib.h>
+#include <Library/UefiLib.h>
+#include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
 #include <Uefi/UefiInternalFormRepresentation.h>
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/HiiDatabase.h>

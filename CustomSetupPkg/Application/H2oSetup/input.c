@@ -105,7 +105,7 @@ PollSimplePointer (
   }
 
   while (TRUE) {
-    Status = mSp->Read (mSp, &State);
+    Status = mSp->GetState (mSp, &State);
     if (EFI_ERROR (Status)) {
       break;
     }
@@ -166,7 +166,7 @@ PollAbsolutePointer (
     return EV_NONE;
   }
 
-  Status = mAp->Read (mAp, &State);
+  Status = mAp->GetState (mAp, &State);
   if (EFI_ERROR (Status)) {
     return EV_NONE;
   }

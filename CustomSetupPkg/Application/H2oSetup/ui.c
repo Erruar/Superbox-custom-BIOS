@@ -546,7 +546,6 @@ PopupGeometry (
   VOID
   )
 {
-  INT32  W = (INT32)GfxWidth ();
   INT32  H = (INT32)GfxHeight ();
   INT32  Count;
   INT32  PanH;
@@ -666,6 +665,13 @@ DrawFooter (
   GfxText (PAD (), Y + S,
            L"Up/Down move   Enter change   Left/Right step   Tab formset   "
            L"Esc back   F10 reset", COL_TEXT_DIM, W - 2 * PAD ());
+  if (mChanged) {
+    /* writes are committed live; the marker just reminds about the reboot */
+    CONST CHAR16  *Mark = L"* F10 saves and reboots";
+    INT32          Tw  = GfxTextWidth (Mark);
+
+    GfxText (W - PAD () - Tw, Y + S, Mark, COL_VALUE, Tw);
+  }
 }
 
 VOID
@@ -824,6 +830,11 @@ HandleKey (
     return;
   }
 
+  if (K->UnicodeChar == CHAR_TAB) {
+    SwitchFormset (1);
+    return;
+  }
+
   switch (K->ScanCode) {
     case SCAN_UP:
       MoveSelection (-1);
@@ -841,9 +852,6 @@ HandleKey (
       if (!GoBack ()) {
         mQuit = TRUE;
       }
-      return;
-    case SCAN_TAB:
-      SwitchFormset (1);
       return;
     case SCAN_PAGE_UP:
       mSel = mSel > (UINTN)VisibleRows () ? mSel - (UINTN)VisibleRows () : 0;

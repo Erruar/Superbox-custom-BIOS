@@ -174,7 +174,7 @@ GetGlyph (
   Blt      = NULL;
   Baseline = 0;
   Status   = mFont->GetGlyph (mFont, Ch, NULL, &Blt, &Baseline);
-  if (EFI_ERROR (Status) || (Blt == NULL) || (Blt->Image == NULL)) {
+  if (EFI_ERROR (Status) || (Blt == NULL) || (Blt->Image.Bitmap == NULL)) {
     if (Blt != NULL) {
       FreePool (Blt);
     }
@@ -187,10 +187,10 @@ GetGlyph (
    * bytes per character are reclaimed at exit.
    */
   G->Found   = TRUE;
-  G->Width   = Blt->Image->Width;
-  G->Height  = Blt->Image->Height;
-  G->Advance = Blt->Image->Width != 0 ? Blt->Image->Width : 6;
-  G->Pixels  = Blt->Image->Pixels;
+  G->Width   = Blt->Width;
+  G->Height  = Blt->Height;
+  G->Advance = Blt->Width != 0 ? Blt->Width : 6;
+  G->Pixels  = Blt->Image.Bitmap;
 
   return G;
 }
@@ -394,7 +394,7 @@ GfxInit (
              mGop->Mode->Info->VerticalResolution;
 
   for (Index = 0; Index < MaxMode; Index++) {
-    EFI_GRAPHICS_OUTPUT_MODE_INFO  *Info = NULL;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION  *Info = NULL;
 
     SizeOfInfo = 0;
     Status     = mGop->QueryMode (mGop, Index, &SizeOfInfo, &Info);

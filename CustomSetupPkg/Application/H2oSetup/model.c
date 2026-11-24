@@ -55,27 +55,6 @@ StrDup (
 }
 
 STATIC
-CHAR16 *
-AsciiToChar16Dup (
-  IN CONST CHAR8  *A
-  )
-{
-  CHAR16  *D;
-  UINTN   Len;
-
-  if (A == NULL) {
-    return NULL;
-  }
-  Len = AsciiStrLen (A);
-  D   = AllocateZeroPool ((Len + 1) * sizeof (CHAR16));
-  if (D == NULL) {
-    return NULL;
-  }
-  AsciiStrToUnicodeStrS ((CHAR8 *)A, D, Len + 1);
-  return D;
-}
-
-STATIC
 UINT64
 ReadLe (
   IN CONST UINT8  *P,
@@ -868,24 +847,45 @@ ModelInit (
   }
   gBS->LocateProtocol (&gEfiHiiConfigRoutingProtocolGuid, NULL, (VOID **)&mCfg);
 
-  Handles = NULL;
+  /* Two-call enumeration: first the size, then the handle array. */
   Count   = 0;
+  CfgSize = 0;
   Status  = mHiiDb->ListPackageLists (
-                     mHiiDb, EFI_HII_PACKAGE_TYPE_ALL, NULL, NULL,
-                     &Handles, &Count);
-  if (EFI_ERROR (Status)) {
+                      mHiiDb, EFI_HII_PACKAGE_TYPE_ALL, NULL, &CfgSize, NULL);
+  if (EFI_ERROR (Status) && (Status != EFI_OUT_OF_RESOURCES) && (CfgSize == 0)) {
     return Status;
   }
+  Handles = AllocatePool (CfgSize);
+  if (Handles == NULL) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+  Status = mHiiDb->ListPackageLists (
+                    mHiiDb, EFI_HII_PACKAGE_TYPE_ALL, NULL, &CfgSize, Handles);
+  if (EFI_ERROR (Status)) {
+    FreePool (Handles);
+    return Status;
+  }
+  Count = CfgSize / sizeof (EFI_HII_HANDLE);
 
   for (Index = 0; Index < Count; Index++) {
     Cfg     = NULL;
     CfgSize = 0;
     Status  = mHiiDb->ExportPackageLists (
-                          mHiiDb, Handles[Index], NULL, &CfgSize, &Cfg, NULL);
-    if (!EFI_ERROR (Status) && (Cfg != NULL) && (CfgSize > 0)) {
-      ParsePackageList (Handles[Index], Cfg, CfgSize);
-      FreePool (Cfg);
+                        mHiiDb, Handles[Index], &CfgSize, NULL);
+    if (CfgSize == 0) {
+      continue;
     }
+    Cfg = AllocatePool (CfgSize);
+    if (Cfg == NULL) {
+      break;
+    }
+    Status = mHiiDb->ExportPackageLists (
+                       mHiiDb, Handles[Index], &CfgSize,
+                       (EFI_HII_PACKAGE_LIST_HEADER *)Cfg);
+    if (!EFI_ERROR (Status) && (CfgSize > 0)) {
+      ParsePackageList (Handles[Index], Cfg, CfgSize);
+    }
+    FreePool (Cfg);
   }
   FreePool (Handles);
 
