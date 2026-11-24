@@ -69,6 +69,36 @@ InputGetCursor (
 }
 
 /*
+ * Relative devices report raw counts; a modern 1600dpi mouse produces
+ * thousands of counts per swipe, so applying them 1:1 makes the cursor fly
+ * across the screen and stick to the edges.  Scale counts to the display
+ * width and divide by eight (a typical BIOS setup pointer speed),
+ * accumulating the remainder so slow movements still move the cursor.
+ */
+STATIC INT32  mMoveAccX;
+STATIC INT32  mMoveAccY;
+
+STATIC
+VOID
+MoveCursorRelative (
+  IN INT32  CountsX,
+  IN INT32  CountsY
+  )
+{
+  INT32  Scale = (INT32)GfxWidth () / 640;
+
+  if (Scale < 1) {
+    Scale = 1;
+  }
+  mMoveAccX += CountsX * Scale;
+  mMoveAccY += CountsY * Scale;
+
+  InputSetCursor (mX + mMoveAccX / 8, mY + mMoveAccY / 8);
+  mMoveAccX %= 8;
+  mMoveAccY %= 8;
+}
+
+/*
  * Collect every instance of a pointer protocol, probing each once.  An
  * instance answering EFI_SUCCESS or EFI_NOT_READY is usable; anything else
  * (DEVICE_ERROR from an unconnected stub) is skipped.
@@ -226,7 +256,7 @@ PollSimplePointer (
       }
 
       if ((State.RelativeMovementX != 0) || (State.RelativeMovementY != 0)) {
-        InputSetCursor (mX + State.RelativeMovementX, mY + State.RelativeMovementY);
+        MoveCursorRelative (State.RelativeMovementX, State.RelativeMovementY);
         Moved = TRUE;
       }
       Wheel += State.RelativeMovementZ;
@@ -340,6 +370,7 @@ InputPoll (
   if (gST->ConIn != NULL) {
     Status = gST->ConIn->ReadKeyStroke (gST->ConIn, &Event->Key);
     if (!EFI_ERROR (Status)) {
+      SbLog ("[input] key", Event->Key.ScanCode, Event->Key.UnicodeChar);
       Event->Type = EV_KEY;
       return EV_KEY;
     }

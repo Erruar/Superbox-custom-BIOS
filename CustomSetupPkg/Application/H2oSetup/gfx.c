@@ -405,6 +405,7 @@ GfxInit (
       BestArea = (UINTN)Info->HorizontalResolution * Info->VerticalResolution;
       Best     = Index;
     }
+    FreePool (Info);
   }
 
   if (Best != mGop->Mode->Mode) {
@@ -445,6 +446,99 @@ GfxInit (
   mCurX = (INT32)(mWidth / 2);
   mCurY = (INT32)(mHeight / 2);
 
+  SbLog ("[gfx] mode list", MaxMode, Best);
+  SbLog ("[gfx] at start", mWidth, mHeight);
+  GfxClear (COL_BG);
+  return EFI_SUCCESS;
+}
+
+/*
+ * Walk the GOP mode list with +/-.  Used on real hardware to test panel modes
+ * (the box's GOP offers more than the BIOS boot mode); the back buffer and
+ * font scale follow the new resolution.
+ */
+EFI_STATUS
+GfxStepMode (
+  IN INTN  Direction
+  )
+{
+  EFI_STATUS  Status;
+  INTN        Index, MaxMode, Guard;
+  UINTN       SizeOfInfo;
+  UINT32      *NewBack, *NewStage;
+
+  if (mGop == NULL) {
+    return EFI_NOT_READY;
+  }
+
+  MaxMode = (INTN)mGop->Mode->MaxMode;
+  Index   = (INTN)mGop->Mode->Mode + Direction;
+
+  for (Guard = 0; Guard < MaxMode; Guard++) {
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION  *Info = NULL;
+
+    Index += (Index >= MaxMode) ? -MaxMode : 0;
+    Index += (Index < 0) ? MaxMode : 0;
+    SizeOfInfo = 0;
+    Status     = mGop->QueryMode (mGop, (UINT32)Index, &SizeOfInfo, &Info);
+    if (Info != NULL) {
+      FreePool (Info);
+      break;                       /* mode exists and is queryable */
+    }
+    Index += Direction;
+  }
+  if (Guard >= MaxMode) {
+    return EFI_UNSUPPORTED;
+  }
+
+  Status = mGop->SetMode (mGop, (UINT32)Index);
+  if (EFI_ERROR (Status)) {
+    SbLog ("[gfx] SetMode fail", (UINTN)Index, (UINTN)Status);
+    return Status;
+  }
+
+  mWidth  = mGop->Mode->Info->HorizontalResolution;
+  mHeight = mGop->Mode->Info->VerticalResolution;
+  mPitch  = mWidth;
+  mSwapRb = (mGop->Mode->Info->PixelFormat == PixelRedGreenBlueReserved8BitPerColor);
+
+  mScale = 1;
+  if (mHeight >= 2000) {
+    mScale = 3;
+  } else if (mHeight >= 900) {
+    mScale = 2;
+  }
+  mCellH = 19 * mScale + 2;
+  mCellW = 7 * mScale;
+
+  NewBack = AllocateZeroPool ((UINTN)mWidth * mHeight * sizeof (UINT32));
+  if (NewBack == NULL) {
+    SbLog ("[gfx] mode buffer OOM", mWidth, mHeight);
+    return EFI_OUT_OF_RESOURCES;
+  }
+  NewStage = NULL;
+  if (mSwapRb) {
+    NewStage = AllocatePool ((UINTN)mWidth * mHeight * sizeof (UINT32));
+    if (NewStage == NULL) {
+      FreePool (NewBack);
+      return EFI_OUT_OF_RESOURCES;
+    }
+  }
+
+  if (mBack != NULL) {
+    FreePool (mBack);
+  }
+  if (mStage != NULL) {
+    FreePool (mStage);
+  }
+  mBack  = NewBack;
+  mStage = NewStage;
+
+  mCurX = (INT32)(mWidth / 2);
+  mCurY = (INT32)(mHeight / 2);
+  InputSetCursor (mCurX, mCurY);
+
+  SbLog ("[gfx] mode", mWidth, mHeight);
   GfxClear (COL_BG);
   return EFI_SUCCESS;
 }

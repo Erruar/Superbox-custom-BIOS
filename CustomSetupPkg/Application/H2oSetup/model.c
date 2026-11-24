@@ -889,6 +889,47 @@ ModelInit (
   }
   FreePool (Handles);
 
+  /*
+   * Field diagnostic: one line per formset (guid + sizes) and per form, so a
+   * log taken off the boot stick shows exactly which H2O form parsed to which
+   * row count.  Cheap: only runs once at startup.
+   */
+  {
+    FORMSET   *Fs;
+    FORM      *F;
+    VARSTORE  *V;
+    STMT      *S;
+    UINTN     Fc, Sc;
+    CHAR8     Line[160];
+
+    for (Fs = mFormsets; Fs != NULL; Fs = Fs->Next) {
+      Fc = 0;
+      Sc = 0;
+      for (F = Fs->Forms; F != NULL; F = F->Next) {
+        Fc++;
+        for (S = F->Statements; S != NULL; S = S->Next) {
+          Sc++;
+        }
+      }
+      AsciiSPrint (Line, sizeof (Line), "[model] fs %g forms %u stmts %u vars %u\r\n",
+                   &Fs->Guid, (UINT32)Fc, (UINT32)Sc, (UINT32)Fs->VarCount);
+      SbLogStr (Line);
+      for (F = Fs->Forms; F != NULL; F = F->Next) {
+        Sc = 0;
+        for (S = F->Statements; S != NULL; S = S->Next) {
+          Sc++;
+        }
+        SbLog ("[model] form", F->Id, Sc);
+      }
+      for (V = Fs->Vars; V != NULL; V = V->Next) {
+        AsciiSPrint (Line, sizeof (Line), "[model] var %g id %u size %u type %u present %d\r\n",
+                     &V->Guid, (UINT32)V->Id, (UINT32)V->Size, (UINT32)V->Type,
+                     (UINT32)V->Present);
+        SbLogStr (Line);
+      }
+    }
+  }
+
   return mFormsets != NULL ? EFI_SUCCESS : EFI_NOT_FOUND;
 }
 

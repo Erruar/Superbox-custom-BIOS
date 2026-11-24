@@ -25,6 +25,7 @@ H2oSetupMain (
   INT32         CursorX, CursorY;
   UINTN         Index;
 
+  SbLogInit ();
   SbLog ("[h2osetup] enter", 0, 0);
 
   Status = GfxInit ();

@@ -32,34 +32,17 @@
 #include <Protocol/AbsolutePointer.h>
 #include <Protocol/SimpleTextIn.h>
 #include <Protocol/DevicePath.h>
+#include <Protocol/SimpleFileSystem.h>
 
 /*
- * Tiny serial tracer: EDK2's AsciiSPrint is not pulled in by this module,
- * so log lines are assembled from fixed text plus decimal values.
+ * Tracing for field debugging.  Lines go to the serial port (visible under
+ * QEMU) and, when a FAT volume is present, are appended to SBXLOG.TXT there,
+ * so a run on the real machine can be analysed from the boot USB stick.
+ * SbLogInit opens the files; calling it twice is harmless.
  */
-STATIC inline VOID
-SbLog (
-  IN CONST CHAR8  *Tag,
-  IN UINTN        V1,
-  IN UINTN        V2
-  )
-{
-  CHAR8   Msg[96];
-  UINTN   Pos = 0;
-  UINTN   N;
-  CHAR8   Num[24];
-
-  while ((Pos < sizeof (Msg) - 8) && (Tag[Pos] != 0)) {
-    Msg[Pos] = Tag[Pos];
-    Pos++;
-  }
-  Msg[Pos++] = ' ';
-  AsciiSPrint (Num, sizeof (Num), "%u 0x%x\r\n", (UINT32)V1, (UINT32)V2);
-  for (N = 0; (N < sizeof (Num)) && (Num[N] != 0); N++) {
-    Msg[Pos++] = Num[N];
-  }
-  SerialPortWrite ((UINT8 *)Msg, Pos);
-}
+EFI_STATUS SbLogInit (VOID);
+VOID       SbLogStr (IN CONST CHAR8  *Line);
+VOID       SbLog (IN CONST CHAR8  *Tag, IN UINTN V1, IN UINTN V2);
 
 /* ---------------------------------------------------------------- palette */
 
@@ -168,6 +151,7 @@ INT32      GfxText (INT32 X, INT32 Y, CONST CHAR16 *S, UINT32 Color, INT32 MaxW)
 INT32      GfxTextWidth (CONST CHAR16 *S);
 VOID       GfxSetCursor (INT32 X, INT32 Y, BOOLEAN Visible);
 EFI_STATUS GfxPresent (VOID);
+EFI_STATUS GfxStepMode (INTN Direction);   /* +1/-1 through the GOP mode list */
 
 /* ---------------------------------------------------------------- input */
 

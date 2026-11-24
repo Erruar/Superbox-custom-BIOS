@@ -384,8 +384,12 @@ Activate (
           }
         }
       }
+      SbLog ("[ui] open form", S->RefFormId, (UINTN)(F != NULL));
       if (F != NULL) {
         SelectForm (Fs, F, TRUE);
+      } else {
+        UnicodeSPrint (mStatus, sizeof (mStatus),
+                       L"form 0x%04x not in model", S->RefFormId);
       }
       break;
     }
@@ -423,7 +427,7 @@ DrawHeader (
   mTabCount = 0;
   for (F = mAll; F != NULL; F = F->Next) {
     CHAR16  *Title = F->Title != NULL ? F->Title : L"(unnamed)";
-    INT32   Tw     = GfxTextWidth (Title) + 3 * S;
+    INT32   Tw     = GfxTextWidth (Title) + 8 * S;
     BOOLEAN Active = (F == mFs);
 
     if ((TabX + Tw > W - PAD ()) || (mTabCount >= MAX_TABS)) {
@@ -437,8 +441,8 @@ DrawHeader (
     if (Active) {
       GfxFill (TabX, Y - S, Tw, ROW_H (), COL_SEL);
     }
-    GfxText (TabX + S, Y, Title, Active ? COL_TEXT_HI : COL_TEXT_DIM, Tw);
-    TabX += Tw + S;
+    GfxText (TabX + 3 * S, Y, Title, Active ? COL_TEXT_HI : COL_TEXT_DIM, Tw);
+    TabX += Tw + 2 * S;
   }
 
   Y += ROW_H () + S;
@@ -662,9 +666,28 @@ DrawFooter (
 
   GfxFill (0, Y, W, FTR_H (), COL_HDR);
   GfxFill (0, Y, W, S, COL_LINE);
-  GfxText (PAD (), Y + S,
-           L"Up/Down move   Enter change   Left/Right step   Tab formset   "
-           L"Esc back", COL_TEXT_DIM, W - 2 * PAD ());
+  {
+    /*
+     * Hints are drawn as separate segments so a narrow display drops whole
+     * words instead of cutting one of them in half at the right margin.
+     */
+    STATIC CONST CHAR16  *Hints[] = {
+      L"Up/Down move", L"Enter change", L"L/R step", L"Tab formset",
+      L"Esc back", L"+/- mode"
+    };
+    INT32  X = PAD ();
+    UINTN  I;
+
+    for (I = 0; I < sizeof (Hints) / sizeof (Hints[0]); I++) {
+      INT32  Tw = GfxTextWidth (Hints[I]);
+
+      if (X + Tw > W - PAD ()) {
+        break;
+      }
+      GfxText (X, Y + S, Hints[I], COL_TEXT_DIM, W - PAD () - X);
+      X += Tw + ((INT32)GfxCellW () * 2);
+    }
+  }
   if (mChanged) {
     /* writes are committed live; the marker just reminds about the reboot */
     CONST CHAR16  *Mark = L"* F10 reboot";
@@ -886,6 +909,21 @@ HandleKey (
       return;
     default:
       break;
+  }
+
+  if (K->UnicodeChar == L'+') {
+    if (!EFI_ERROR (GfxStepMode (1))) {
+      UnicodeSPrint (mStatus, sizeof (mStatus), L"mode %ux%u",
+                     (UINTN)GfxWidth (), (UINTN)GfxHeight ());
+    }
+    return;
+  }
+  if (K->UnicodeChar == L'-') {
+    if (!EFI_ERROR (GfxStepMode (-1))) {
+      UnicodeSPrint (mStatus, sizeof (mStatus), L"mode %ux%u",
+                     (UINTN)GfxWidth (), (UINTN)GfxHeight ());
+    }
+    return;
   }
 
   if (K->UnicodeChar == CHAR_CARRIAGE_RETURN) {
