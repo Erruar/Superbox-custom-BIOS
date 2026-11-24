@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Drive the QEMU instance started by tools/qemu_run.ps1 over QMP.
+r"""Drive the QEMU instance started by tools/qemu_run.ps1 over QMP.
 
 Grabs screen dumps and injects keyboard/mouse events so the custom setup UI
-can be validated headlessly.
+can be validated headlessly.  Uses the QEMU 11 input-send-event schema:
+  key:  {"type":"key","data":{"data":{"key":{"type":"qcode","data":"a"},"down":true}}}
+  btn:  {"type":"btn","data":{"data":{"button":"left","down":true}}}
+  move: {"type":"abs","data":{"data":{"axis":"x","value":N}}}
 
 Usage examples:
   py tools/qemu_probe.py dump screen0.ppm
-  py tools/qemu_probe.py key down
-  py tools/qemu_probe.py key down down enter
+  py tools/qemu_probe.py key down enter
+  py tools/qemu_probe.py text 'fs0:\EFI\BOOT\BOOTX64.EFI'
   py tools/qemu_probe.py click 800 400
   py tools/qemu_probe.py serial
 """
@@ -39,26 +42,34 @@ class Qmp:
         while True:
             msg = self._read()
             if "return" in msg or "error" in msg:
+                if "error" in msg:
+                    print("QMP error:", json.dumps(msg["error"]))
                 return msg
+
+    def _key(self, qcode, down):
+        self._cmd({"execute": "input-send-event",
+                   "arguments": {"events": [
+                       {"type": "key",
+                        "data": {"key": {"type": "qcode", "data": qcode},
+                                 "down": down}}]}})
 
     def screendump(self, path: str):
         self._cmd({"execute": "screendump", "arguments": {"filename": path}})
 
+    def key(self, qcode: str):
+        self._key(qcode, True)
+        self._key(qcode, False)
+
     def keys(self, names):
         for n in names:
-            self._cmd({"execute": "input-send-event",
-                       "arguments": {"events": [
-                           {"type": "keydown", "data": {"key": {"qcode": n}}}]}})
-            self._cmd({"execute": "input-send-event",
-                       "arguments": {"events": [
-                           {"type": "keyup", "data": {"key": {"qcode": n}}}]}})
+            self.key(n)
             time.sleep(0.15)
 
     SHIFT_CHARS = {
         ':': 'semicolon', '.': 'dot', '_': 'minus', '+': 'equal', ')': '0',
         '(': '9', '&': '7', '%': '5', '$': '4', '#': '3', '@': '2', '!': '1',
         '?': 'slash', '"': 'quote', '<': 'comma', '>': 'period', '|': 'backslash',
-        '~': 'grave_accent', '^': '6', '*': '8', '/': 'slash',
+        '~': 'grave_accent', '^': '6', '*': '8',
     }
 
     def text(self, s: str):
@@ -75,31 +86,33 @@ class Qmp:
                 q, shift = ch, False
             else:
                 continue
-            key = {"qcode": q}
-            ev = []
             if shift:
-                ev.append({"type": "keydown", "data": {"key": {"qcode": "shift"}}})
-            ev.append({"type": "keydown", "data": {"key": key}})
-            ev.append({"type": "keyup", "data": {"key": key}})
+                self._key('shift', True)
+            self._key(q, True)
+            self._key(q, False)
             if shift:
-                ev.append({"type": "keyup", "data": {"key": {"qcode": "shift"}}})
-            self._cmd({"execute": "input-send-event", "arguments": {"events": ev}})
+                self._key('shift', False)
             time.sleep(0.05)
 
+    def abs_move(self, x: int, y: int, screen_w: int = 1920, screen_h: int = 1080):
+        nx = int(x * 65535 / (screen_w - 1))
+        ny = int(y * 65535 / (screen_h - 1))
+        self._cmd({"execute": "input-send-event",
+                   "arguments": {"events": [
+                       {"type": "abs", "data": {"axis": "x", "value": nx}},
+                       {"type": "abs", "data": {"axis": "y", "value": ny}}]}})
+
+    def button(self, name: str, down: bool):
+        self._cmd({"execute": "input-send-event",
+                   "arguments": {"events": [
+                       {"type": "btn",
+                        "data": {"button": name, "down": down}}]}})
+
     def click(self, x: int, y: int, button: str = "left"):
-        # QMP absolute pointer: 0..(screen width/height - 1) scaled to 0..(2^31)
-        def scale(v):
-            return int(v * 32767 / 1920)   # 1080p default; OVMF posts 1920x1080
-        self._cmd({"execute": "input-send-event",
-                   "arguments": {"events": [
-                       {"type": "abs-move", "data": {"x": scale(x), "y": scale(y)}}]}})
-        self._cmd({"execute": "input-send-event",
-                   "arguments": {"events": [
-                       {"type": "down", "data": {"button": button}}]}})
+        self.abs_move(x, y)
+        self.button(button, True)
         time.sleep(0.1)
-        self._cmd({"execute": "input-send-event",
-                   "arguments": {"events": [
-                       {"type": "up", "data": {"button": button}}]}})
+        self.button(button, False)
 
 
 def main():
@@ -119,6 +132,9 @@ def main():
     elif args[0] == "key":
         q.keys(args[1:])
         print("keys sent:", " ".join(args[1:]))
+    elif args[0] == "move":
+        q.abs_move(int(args[1]), int(args[2]))
+        print("move", args[1], args[2])
     elif args[0] == "click":
         q.click(int(args[1]), int(args[2]))
         print("click", args[1], args[2])
