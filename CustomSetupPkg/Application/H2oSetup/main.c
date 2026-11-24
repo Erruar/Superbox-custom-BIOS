@@ -25,20 +25,20 @@ H2oSetupMain (
   INT32         CursorX, CursorY;
   UINTN         Index;
 
-  SerialPortWrite ((UINT8 *)"\r\n[h2osetup] start\r\n", 23);
+  SbLog ("[main] enter", 0, 0);
 
   Status = GfxInit ();
+  SbLog ("[main] gfx init", (UINTN)Status, 0);
   if (EFI_ERROR (Status)) {
     Print (L"H2oSetup: no usable graphics output (%r)\n", Status);
     return Status;
   }
 
   InputInit ();
-
-  DEBUG ((DEBUG_INFO, "[h2osetup] gfx %ux%u scale %u\n",
-          GfxWidth (), GfxHeight (), GfxScale ()));
+  SbLog ("[main] input init", 0, 0);
 
   Status = ModelInit ();
+  SbLog ("[main] model init", (UINTN)Status, (UINTN)ModelFormsets ());
   if (EFI_ERROR (Status) || (ModelFormsets () == NULL)) {
     GfxClear (COL_BG);
     GfxText (PAD_TEXT (), PAD_TEXT (),
@@ -62,13 +62,16 @@ H2oSetupMain (
 
   Fs = ModelFormsets ();
   Status = UiInit (Fs);
+  SbLog ("[main] ui init", (UINTN)Status, 0);
   if (EFI_ERROR (Status)) {
     GfxExit ();
     return Status;
   }
 
+  SbLog ("[main] first draw", GfxWidth (), GfxHeight ());
   UiDraw ();
   GfxPresent ();
+  SbLog ("[main] loop", 0, 0);
 
   while (!UiQuitRequested ()) {
     UINT32  Type = InputPoll (&Event);

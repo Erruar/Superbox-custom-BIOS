@@ -31,6 +31,34 @@
 #include <Protocol/AbsolutePointer.h>
 #include <Protocol/SimpleTextIn.h>
 
+/*
+ * Tiny serial tracer: EDK2's AsciiSPrint is not pulled in by this module,
+ * so log lines are assembled from fixed text plus decimal values.
+ */
+STATIC inline VOID
+SbLog (
+  IN CONST CHAR8  *Tag,
+  IN UINTN        V1,
+  IN UINTN        V2
+  )
+{
+  CHAR8   Msg[96];
+  UINTN   Pos = 0;
+  UINTN   N;
+  CHAR8   Num[24];
+
+  while ((Pos < sizeof (Msg) - 8) && (Tag[Pos] != 0)) {
+    Msg[Pos] = Tag[Pos];
+    Pos++;
+  }
+  Msg[Pos++] = ' ';
+  AsciiSPrint (Num, sizeof (Num), "%u 0x%x\r\n", (UINT32)V1, (UINT32)V2);
+  for (N = 0; (N < sizeof (Num)) && (Num[N] != 0); N++) {
+    Msg[Pos++] = Num[N];
+  }
+  SerialPortWrite ((UINT8 *)Msg, Pos);
+}
+
 /* ---------------------------------------------------------------- palette */
 
 #define COL_BG        0x00101826u   /* window background        */
