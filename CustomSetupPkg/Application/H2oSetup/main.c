@@ -69,16 +69,13 @@ H2oSetupMain (
 
   Fs = ModelFormsets ();
   Status = UiInit (Fs);
-  SbLog ("[main] ui init", (UINTN)Status, 0);
   if (EFI_ERROR (Status)) {
     GfxExit ();
     return Status;
   }
 
-  SbLog ("[main] first draw", GfxWidth (), GfxHeight ());
   UiDraw ();
   GfxPresent ();
-  SbLog ("[main] loop", 0, 0);
 
   while (!UiQuitRequested ()) {
     UINT32  Type = InputPoll (&Event);
