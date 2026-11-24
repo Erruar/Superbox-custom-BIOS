@@ -127,15 +127,15 @@ def build(image: Path, files: list[tuple[Path, str]]) -> None:
     boot_sectors[32:64] = dir_entry("..", "", 0x10, efi_cluster, 0)
 
     entry_off = 64
-    for f in files:
+    for f, fatname in files:
         data = f.read_bytes()
         ncl = max(1, (len(data) + SPC * SECTOR - 1) // (SPC * SECTOR))
         start = next_cluster
         alloc_chain(ncl, start)
         next_cluster += ncl
 
-        base = f.name.upper().rsplit(".", 1)[0][:8]
-        ext = f.name.upper().rsplit(".", 1)[1][:3] if "." in f.name else ""
+        base = fatname.rsplit(".", 1)[0][:8]
+        ext = fatname.rsplit(".", 1)[1][:3] if "." in fatname else ""
         boot_sectors[entry_off:entry_off + 32] = dir_entry(base, ext, 0x20, start, len(data))
         entry_off += 32
 
@@ -171,7 +171,7 @@ def main() -> int:
         print(__doc__)
         return 1
     image = Path(sys.argv[1])
-    files = [Path(p) for p in sys.argv[2:]]
+    files = parse_specs(sys.argv[2:])
     build(image, files)
     return 0
 
