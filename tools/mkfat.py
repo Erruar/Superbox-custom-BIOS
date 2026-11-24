@@ -117,6 +117,20 @@ def build(image: Path, files: list[tuple[Path, str]]) -> None:
     root_sectors_data = bytearray(root_sectors * SECTOR)
     root_sectors_data[0:32] = dir_entry("EFI", "", 0x10, efi_cluster, 0)
 
+    # optional root file, e.g. the shell startup script
+    nsh = os.environ.get("MKFAT_NSH")
+    root_entry_off = 32
+    if nsh:
+        data = Path(nsh).read_bytes()
+        ncl = max(1, (len(data) + SPC * SECTOR - 1) // (SPC * SECTOR))
+        start = next_cluster
+        alloc_chain(ncl, start)
+        next_cluster += ncl
+        root_sectors_data[root_entry_off:root_entry_off + 32] = \
+            dir_entry("STARTUP", "NSH", 0x20, start, len(data))
+        off = data_start * SECTOR + (start - 2) * SPC * SECTOR
+        img[off:off + len(data)] = data
+
     efi_sectors = bytearray(SECTOR)
     efi_sectors[0:32] = dir_entry(".", "", 0x10, efi_cluster, 0)
     efi_sectors[32:64] = dir_entry("..", "", 0x10, root_cluster, 0)

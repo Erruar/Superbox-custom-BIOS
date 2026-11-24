@@ -29,6 +29,7 @@ $Extra = @(
     "$Repo\build\UsbMouseAbsolutePointerDxe.efi=ABSDXEDXE.EFI"
 )
 $Extra = $Extra | Where-Object { (Test-Path ($_ -split '=')[0]) }
+$env:MKFAT_NSH = "$Repo\tools\startup.nsh"
 & python "$Repo\tools\mkfat.py" "$Work\efi.img" @Extra
 if (-not (Test-Path "$Work\efi.img")) { throw 'mkfat failed' }
 
