@@ -53,45 +53,123 @@ class Qmp:
                         "data": {"key": {"type": "qcode", "data": qcode},
                                  "down": down}}]}})
 
+    def _raw(self, usage, down):
+        """Send one key by number (USB HID usage) - layout independent."""
+        self._cmd({"execute": "input-send-event",
+                   "arguments": {"events": [
+                       {"type": "key",
+                        "data": {"key": {"type": "number", "data": usage},
+                                 "down": down}}]}})
+
+    # US keyboard: HID usage for the unshifted key of each character.
+    US_SHIFT = {
+        ')': 0x27, '!': 0x1E, '@': 0x1F, '#': 0x20, '$': 0x21, '%': 0x22,
+        '^': 0x23, '&': 0x24, '*': 0x25, '(': 0x26, '_': 0x2D, '+': 0x2E,
+        '{': 0x2A, '}': 0x2B, ':': 0x33, '"': 0x34, '|': 0x35,
+        '~': 0x35, '<': 0x36, '>': 0x37, '?': 0x38,
+    }
+    US_PLAIN = {
+        ' ': 0x2C, '-': 0x2D, '=': 0x2E, '[': 0x2A, ']': 0x2B, '\\': 0x2F,
+        ';': 0x33, "'": 0x34, '`': 0x35, ',': 0x36, '.': 0x37, '/': 0x38,
+    }
+    NAMED = {
+        'esc': 0x29, 'ret': 0x28, 'tab': 0x2B, 'bs': 0x2A,
+        'up': 0x52, 'down': 0x51, 'right': 0x4F, 'left': 0x50,
+        'home': 0x4A, 'end': 0x4D, 'pgup': 0x4B, 'pgdn': 0x4E,
+        'del': 0x4C, 'ins': 0x49, 'space': 0x2C,
+        'f1': 0x3A, 'f2': 0x3B, 'f3': 0x3C, 'f4': 0x3D, 'f5': 0x3E,
+        'f6': 0x3F, 'f7': 0x40, 'f8': 0x41, 'f9': 0x42, 'f10': 0x43,
+        'f11': 0x44, 'f12': 0x45,
+    }
+
+    # character -> (qcode, shift) on a US layout
+    QSYM = {
+        '-': ('minus', False), '=': ('equal', False), '[': ('bracket_left', False),
+        ']': ('bracket_right', False), '\\': ('backslash', False),
+        ';': ('semicolon', False), "'": ('apostrophe', False), '`': ('grave_accent', False),
+        ',': ('comma', False), '.': ('dot', False), '/': ('slash', False),
+        '!': ('1', True), '@': ('2', True), '#': ('3', True), '$': ('4', True),
+        '%': ('5', True), '^': ('6', True), '&': ('7', True), '*': ('8', True),
+        '(': ('9', True), ')': ('0', True), '_': ('minus', True), '+': ('equal', True),
+        '{': ('bracket_left', True), '}': ('bracket_right', True),
+        '|': ('backslash', True), ':': ('semicolon', True), '"': ('apostrophe', True),
+        '~': ('grave_accent', True), '<': ('comma', True), '>': ('dot', True),
+        '?': ('slash', True),
+    }
+
+    # QEMU qcode names (QKeyCode enum of this build), used for typing keys
+    QKEYS = {
+        'esc': 'esc', 'ret': 'ret', 'tab': 'tab', 'bs': 'backspace',
+        'up': 'up', 'down': 'down', 'right': 'right', 'left': 'left',
+        'home': 'home', 'end': 'end', 'pgup': 'pgup', 'pgdn': 'pgdn',
+        'del': 'delete', 'ins': 'insert', 'space': 'spc',
+        'f1': 'f1', 'f2': 'f2', 'f3': 'f3', 'f4': 'f4', 'f5': 'f5',
+        'f6': 'f6', 'f7': 'f7', 'f8': 'f8', 'f9': 'f9', 'f10': 'f10',
+        'f11': 'f11', 'f12': 'f12',
+    }
+
+    def press_named(self, name, shift=False):
+        q = self.QKEYS.get(name, name)
+        if shift:
+            self._key('shift', True)
+        self._key(q, True)
+        self._key(q, False)
+        if shift:
+            self._key('shift', False)
+
+    def press(self, usage, shift=False):
+        if shift:
+            self._raw(0xE1, True)
+        self._raw(usage, True)
+        self._raw(usage, False)
+        if shift:
+            self._raw(0xE1, False)
+
     def screendump(self, path: str):
         self._cmd({"execute": "screendump", "arguments": {"filename": path}})
 
-    def key(self, qcode: str):
-        self._key(qcode, True)
-        self._key(qcode, False)
+    def key(self, name: str):
+        if name.isdigit():
+            self.press(int(name))
+            return
+        if '+' in name:                       # combo, e.g. ctrl+c
+            parts = name.split('+')
+            mods, base = parts[:-1], parts[-1]
+            for m in mods:
+                self._key(m, True)
+            self.press_named(base)
+            for m in reversed(mods):
+                self._key(m, False)
+            return
+        if name in self.QKEYS:
+            self.press_named(name)
+            return
+        if len(name) == 1:
+            self.char(name)
+            return
+        print("unknown key", name)
 
     def keys(self, names):
         for n in names:
             self.key(n)
             time.sleep(0.15)
 
-    SHIFT_CHARS = {
-        ':': 'semicolon', '.': 'dot', '_': 'minus', '+': 'equal', ')': '0',
-        '(': '9', '&': '7', '%': '5', '$': '4', '#': '3', '@': '2', '!': '1',
-        '?': 'slash', '"': 'quote', '<': 'comma', '>': 'period', '|': 'backslash',
-        '~': 'grave_accent', '^': '6', '*': '8',
-    }
+    def char(self, ch):
+        if ch.isalpha():
+            self.press_named(ch.lower(), shift=ch.isupper())
+        elif ch.isdigit():
+            self.press_named(ch)
+        elif ch in self.QSYM:
+            q, shift = self.QSYM[ch]
+            self.press_named(q, shift=shift)
+        elif ch.isspace():
+            self.press_named('space')
+        else:
+            print("skipped character", repr(ch))
 
     def text(self, s: str):
         for ch in s:
-            if ch == ' ':
-                q, shift = 'space', False
-            elif ch == '\\':
-                q, shift = 'backslash', False
-            elif ch in self.SHIFT_CHARS:
-                q, shift = self.SHIFT_CHARS[ch], True
-            elif ch.isupper():
-                q, shift = ch.lower(), True
-            elif ch.isalpha() or ch.isdigit():
-                q, shift = ch, False
-            else:
-                continue
-            if shift:
-                self._key('shift', True)
-            self._key(q, True)
-            self._key(q, False)
-            if shift:
-                self._key('shift', False)
+            self.char(ch)
             time.sleep(0.05)
 
     def abs_move(self, x: int, y: int, screen_w: int = 1920, screen_h: int = 1080):

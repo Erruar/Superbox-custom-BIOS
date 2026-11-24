@@ -6,6 +6,7 @@ Used by the QEMU test harness: the freshly built H2oSetup.efi is placed at
 
 Usage: py tools/mkfat.py <output.img> <src.efi> [more files...]
 """
+import os
 import struct
 import sys
 from pathlib import Path
@@ -35,20 +36,22 @@ def fat16(sector_count: int) -> tuple[int, int, int]:
 
 
 def dir_entry(name: str, ext: str, attr: int, cluster: int, size: int) -> bytes:
+    """One 32-byte FAT directory record."""
     n = (name[:8].upper().ljust(8) + ext[:3].upper().ljust(3)).encode("ascii")
     return (
         n
-        + bytes([attr])
-        + b"\x00" * 8                       # reserved / NT / timestamps
-        + b"\x00\x00" * 3
-        + struct.pack("<HHI", 0, cluster, 0)[:0]
-        + struct.pack("<HH", 0, cluster)
-        + struct.pack("<I", size)
+        + bytes([attr])                      # 11 attributes
+        + b"\x00"                            # 12 reserved / NT flags
+        + b"\x00" * 11                       # 13..23 times and date
+        + struct.pack("<H", cluster)         # 24 first cluster (high, FAT32)
+        + struct.pack("<H", cluster)         # 26 first cluster (low)
+        + struct.pack("<I", size)            # 28 file size
     )
 
 
 def build(image: Path, files: list[Path]) -> None:
-    sectors = 32768
+    # 128 MiB, the image size the EDK2 FAT driver is happiest with
+    sectors = int(os.environ.get("MKFAT_MB", "128")) * 2048
     clusters, fat_sectors, data_start = fat16(sectors)
     root_sectors = (ROOT_ENTRIES * 32 + SECTOR - 1) // SECTOR
 
@@ -83,6 +86,10 @@ def build(image: Path, files: list[Path]) -> None:
     fat = bytearray(fat_sectors * SECTOR)
     fat[0:4] = struct.pack("<HH", 0xFFF8, 0xFFFF)
 
+    def mark_used(cluster: int) -> None:
+        """Terminate a (single-cluster) allocation chain, e.g. a directory."""
+        struct.pack_into("<H", fat, cluster * 2, FAT16_EOF)
+
     def alloc_chain(nclusters: int, start: int) -> int:
         for c in range(nclusters - 1):
             struct.pack_into("<H", fat, (start + c) * 2, start + c + 1)
@@ -115,18 +122,17 @@ def build(image: Path, files: list[Path]) -> None:
         alloc_chain(ncl, start)
         next_cluster += ncl
 
-        name = f.name.upper().replace(".", "")
-        base = f.name.upper().split(".")[0][:8]
-        ext = f.name.upper().split(".")[1][:3] if "." in f.name else ""
+        base = f.name.upper().rsplit(".", 1)[0][:8]
+        ext = f.name.upper().rsplit(".", 1)[1][:3] if "." in f.name else ""
         boot_sectors[entry_off:entry_off + 32] = dir_entry(base, ext, 0x20, start, len(data))
         entry_off += 32
 
         off = data_start * SECTOR + (start - 2) * SPC * SECTOR
         img[off:off + len(data)] = data
 
-    struct.pack_into("<H", fat, efi_cluster * 2, FAT16_EOF)
-    struct.pack_into("<H", fat, boot_cluster * 2, FAT16_EOF)
-    struct.pack_into("<H", fat, (efi_cluster + 1) * 2, FAT16_EOF)
+    # the EFI and BOOT directories occupy one cluster each
+    mark_used(efi_cluster)
+    mark_used(boot_cluster)
 
     # --- write FAT copies, root and sub directories -----------------------
     fat_off = RESERVED * SECTOR
