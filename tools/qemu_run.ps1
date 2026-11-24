@@ -43,6 +43,7 @@ $args = @(
     '-device', 'ich9-ahci,id=ahci',
     '-device', 'ide-hd,bus=ahci.0,drive=disk0',
     '-serial', "file:$Work\serial.log",
+    '-net', 'none',
     '-monitor', 'none',
     '-display', 'none',
     '-qmp', 'tcp:127.0.0.1:4545,server,nowait'
