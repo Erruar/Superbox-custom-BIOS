@@ -993,7 +993,7 @@ PopupGeometry (
     return 0;
   }
   Count = mPopup->Kind == ST_ONEOF ? (INT32)mPopup->OptionCount : 2;
-  PanH  = (Count + 4) * RH () + (INT32)(24 * S ());
+  PanH  = (Count + 5) * RH () + (INT32)(24 * S ());
   if (PanH > H - (INT32)(60 * S ())) {
     PanH = H - (INT32)(60 * S ());
   }
@@ -1088,8 +1088,6 @@ DrawPopup (
   T (SbMono16, PanX + (INT32)(16 * Sc),
      PanY + PanH - (INT32)(14 * Sc) - A (SbMono16),
      L"Enter pick, Esc close, Left/Right step", COL_INK);
-  SbLog6 ("[pop] geom", PanY, PanH, (INT32)mPopup->OptionCount, Y, RH (),
-          mPopup->Kind);
 }
 
 /* --------------------------------------------------------- help overlay */

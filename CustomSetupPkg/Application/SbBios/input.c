@@ -18,8 +18,10 @@
  *   4. The box's PS/2 touchpad stream emits garbage bursts (hundreds of
  *      counts per report) that fling the cursor into the corners.  Every
  *      report is clamped to REL_CLAMP counts, and an instance that bursts
- *      REL_BURSTS times is blacklisted in favour of the next relative
- *      device (the USB mouse).
+ *      REL_BURSTS times is banned permanently in favour of the next
+ *      relative device (the USB mouse).  If every relative instance is
+ *      banned, the priority window goes quiet and the touchscreen
+ *      (absolute) drives the cursor.
  *
  * Keyboard input comes from ConIn SimpleTextIn; the agent instance handed
  * to shell-launched apps reports EFI_DEVICE_ERROR on CheckEvent, so the
