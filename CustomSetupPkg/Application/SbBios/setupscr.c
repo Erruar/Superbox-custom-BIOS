@@ -178,9 +178,11 @@ FooterTop (
 
 /*
  * The concept's panel grid.  Every panel is bounded by pencil corner
- * brackets only; the dashboard (Monitor) box and the Help Info box end
- * at the same bottom line, and the "superbox" box starts at the same
- * top line as the tab row.
+ * brackets only.  The tab row and the form list live in their own box
+ * on the right (ContentMid is its bottom line), the Help Info box sits
+ * under it, and the dashboard box on the left ends on the same bottom
+ * line as Help Info, with a clear gap between the two boxes.  There is
+ * no frame around the whole viewport.
  */
 STATIC
 INT32
@@ -203,12 +205,30 @@ HelpTop (
 
 STATIC
 INT32
+ContentMid (
+  VOID
+  )
+{
+  return HelpTop () - (INT32)(30 * S ());
+}
+
+STATIC
+INT32
+RowsBottom (
+  VOID
+  )
+{
+  return ContentMid () - (INT32)(14 * S ());
+}
+
+STATIC
+INT32
 VisibleRows (
   VOID
   )
 {
   /* leave room for the Help Info block at the bottom of the content */
-  INT32  H = HelpTop () - (INT32)(14 * S ()) - ContentTop ();
+  INT32  H = RowsBottom () - ContentTop ();
   INT32  N = H / RH ();
 
   return N > 1 ? N : 1;
@@ -496,6 +516,7 @@ OpenPopup (
   mMode     = MODE_POPUP;
   mPopup    = S;
   mPopupSel = 0;
+  SbLog ("[ui] popup", (UINTN)S->Kind, (UINTN)S->OptionCount);
 
   if (S->Kind == ST_ONEOF) {
     V   = ModelVarstore (mFs, S->VarStoreId);
@@ -774,10 +795,13 @@ DrawLeft (
   T (SbSyne26, X, Y, mHw.Weekday, COL_INK);
 
   /* The "superbox" bracket box: its top line sits on the same row as
-   * the tab chips, its bottom just clears the weekday */
+   * the tab chips, its bottom just clears the weekday.  Both left
+   * boxes are narrower than the column so they never touch the right
+   * column's boxes. */
   mBoxAEnd = Y + (INT32)(16 * Sc);
-  GfxPencilCorners (X - (INT32)(10 * Sc), mTabY,
-                    LCW + (INT32)(20 * Sc), mBoxAEnd - mTabY,
+  GfxPencilCorners (X - (INT32)(10 * Sc), mTabY - (INT32)(10 * Sc),
+                    LCW + (INT32)(6 * Sc),
+                    mBoxAEnd - mTabY + (INT32)(10 * Sc),
                     Arm, Pt, 0x9B41Du, PC_ALL, COL_INK);
 
   /* The dashboard bracket box: starts below box A and ends on the
@@ -818,7 +842,7 @@ DrawLeft (
 
   /* Close the dashboard box on the Help Info bottom line */
   GfxPencilCorners (X - (INT32)(10 * Sc), BoxB,
-                    LCW + (INT32)(20 * Sc), ContentBottom () - BoxB,
+                    LCW + (INT32)(6 * Sc), ContentBottom () - BoxB,
                     Arm, Pt, 0x1F77Au, PC_ALL, COL_INK);
 
   /* CPU brand under the dashboard when it fits */
@@ -847,16 +871,20 @@ DrawContent (
   INT32      Arm = (INT32)(16 * Sc);
 
   /*
-   * The concept's grid, corner brackets only (no closed frames): one
-   * big box from just above the tab row down to ContentBottom, the
-   * "superbox" and Monitor boxes in the left column (the Monitor box
-   * and the Help Info box end on the same line, the "superbox" box
-   * starts on the tab row's line), and the Help Info box on the right.
+   * The concept's grid, corner brackets only, one box per panel, no
+   * frame around the viewport: the tab row and the form list share a
+   * box whose top line is the "superbox" box's top line; the Help Info
+   * box below it ends on the same bottom line as the dashboard box,
+   * with a visible gap between the two boxes.
    */
-  GfxPencilCorners (PADX () / 2, PADX () / 2,
-                    (INT32)GfxWidth () - PADX () - PADX () / 2,
-                    ContentBottom () - PADX () / 2,
-                    Arm, Pt, 0xB0B8DU, PC_ALL, COL_INK);
+  {
+    INT32  BX = X - (INT32)(10 * Sc);
+    INT32  BY = mTabY - (INT32)(10 * Sc);
+
+    GfxPencilCorners (BX, BY,
+                      W - PADX () - BX, ContentMid () - BY,
+                      Arm, Pt, 0xB0B8Du, PC_ALL, COL_INK);
+  }
 
   if (EFI_ERROR (mModelStatus) || (mAll == NULL)) {
     T (SbSyne22, X, ContentTop (),
@@ -879,7 +907,7 @@ DrawContent (
   }
 
   Y = ContentTop ();
-  Bottom = HelpTop () - (INT32)(14 * Sc);
+  Bottom = RowsBottom ();
 
   if (mForm == NULL) {
     T (SbMono16, X, Y, L"This formset publishes no forms.", COL_INK);
@@ -1071,10 +1099,11 @@ DrawPopup (
     return;
   }
 
-  /* paper panel with a hand-drawn frame, exactly like the mock's panels */
+  /* paper panel, corner brackets only like every other panel */
   GfxFill (PanX, PanY, PanW, PanH, COL_BG);
-  GfxSketchFrame (PanX, PanY, PanW, PanH,
-                  (UINT32)(PanX * 31 + PanY * 7 + PanW), COL_INK);
+  GfxPencilCorners (PanX, PanY, PanW, PanH, (INT32)(18 * Sc),
+                    Sc >= 2 ? 2 : 1, (UINT32)(PanX * 31 + PanY * 7 + PanW),
+                    PC_ALL, COL_INK);
 
   T (SbSyne22, PanX + (INT32)(16 * Sc),
      PanY + (INT32)(14 * Sc) + A (SbSyne22),
@@ -1093,6 +1122,9 @@ DrawPopup (
       CHAR16   *Mark = (mPopup->Options[I].Value == Cur) ? L"* " : L"  ";
       CHAR16   *Label = mPopup->Options[I].Label;
 
+      if (Y + RH () > PanY + PanH - (INT32)(34 * Sc)) {
+        break;               /* never paint over the key hint */
+      }
       if (Sel) {
         GfxFill (PanX + (INT32)(10 * Sc), Y - 2 * Sc,
                  PanW - (INT32)(20 * Sc), RH (), COL_ORANGE);
@@ -1188,6 +1220,28 @@ SetupDraw (
   if (mHelp) {
     DrawHelp ();
   }
+}
+
+/*
+ * Timed refresh while the main loop idles: re-read the clock and the
+ * sensors and repaint only the left panel (the "superbox" and
+ * dashboard boxes).  The form list, tabs, popup and footer are left
+ * untouched, so the update stays cheap and never fights a click.
+ */
+VOID
+SetupTick (
+  VOID
+  )
+{
+  if ((mMode == MODE_POPUP) || mHelp) {
+    HwUpdate (&mHw);
+    mHwMinute = (UINTN)mHw.Time[0] * 100 + mHw.Time[1];
+    return;
+  }
+  HwUpdate (&mHw);
+  mHwMinute = (UINTN)mHw.Time[0] * 100 + mHw.Time[1];
+  GfxFill (0, 0, CONTENT_X (), (INT32)GfxHeight (), COL_BG);
+  DrawLeft ();
 }
 
 /* --------------------------------------------------------------- events */

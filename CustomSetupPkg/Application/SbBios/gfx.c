@@ -333,7 +333,23 @@ GfxGear (
     INT32  Ox = Dx[T] * (Dy[T] != 0 ? Diag : Card);
     INT32  Oy = Dy[T] * (Dx[T] != 0 ? Diag : Card);
 
-    GfxFill (Cx + Ox - Half, Cy + Oy - Half, 2 * Half + 1, 2 * Half + 1, Ink);
+    if ((Dx[T] != 0) && (Dy[T] != 0)) {
+      /*
+       * Diagonal teeth are squares rotated 45 degrees (diamonds), so
+       * they point along their direction instead of reading as extra
+       * axis-aligned bumps.
+       */
+      INT32  Pts[4][2];
+
+      Pts[0][0] = Cx + Ox;        Pts[0][1] = Cy + Oy - Half;
+      Pts[1][0] = Cx + Ox + Half; Pts[1][1] = Cy + Oy;
+      Pts[2][0] = Cx + Ox;        Pts[2][1] = Cy + Oy + Half;
+      Pts[3][0] = Cx + Ox - Half; Pts[3][1] = Cy + Oy;
+      GfxPolyFill (Pts, 4, Ink);
+    } else {
+      GfxFill (Cx + Ox - Half, Cy + Oy - Half,
+               2 * Half + 1, 2 * Half + 1, Ink);
+    }
   }
   GfxCircle (Cx, Cy, Disc, Ink, TRUE);
   GfxCircle (Cx, Cy, MAX (2, R * 38 / 100), Hole, TRUE);
@@ -433,7 +449,7 @@ GfxSketchH (
   IN UINT32  Color
   )
 {
-  SketchLine (X, Y, Len, 2, TRUE, Seed, Color);
+  SketchLine (X, Y, Len, GfxUi () >= 2 ? 2 : 1, TRUE, Seed, Color);
 }
 
 VOID
@@ -445,7 +461,7 @@ GfxSketchV (
   IN UINT32  Color
   )
 {
-  SketchLine (X, Y, Len, 2, FALSE, Seed, Color);
+  SketchLine (X, Y, Len, GfxUi () >= 2 ? 2 : 1, FALSE, Seed, Color);
 }
 
 VOID

@@ -254,6 +254,7 @@ BOOLEAN BootWantSetup (VOID);                /* F10 pressed */
 EFI_STATUS SetupEnter (VOID);                /* lazy ModelInit, draw  */
 VOID       SetupEvent (INPUT_EVENT *Event);
 VOID       SetupDraw (VOID);
+VOID       SetupTick (VOID);
 BOOLEAN    SetupWantBoot (VOID);             /* F7 pressed */
 
 #endif /* _SB_BIOS_H_ */

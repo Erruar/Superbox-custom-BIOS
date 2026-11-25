@@ -11,6 +11,9 @@
 
 #define FRAME_STALL_US  8000
 
+/* one idle lap stalls 8 ms plus poll overhead (~10 ms); 300 laps ~= 3 s */
+#define SENSOR_TICK_LAPS  300u
+
 #define SCR_BOOT   0
 #define SCR_SETUP  1
 
@@ -25,6 +28,7 @@ SbBiosMain (
   INPUT_EVENT   Event;
   INT32         Screen = SCR_BOOT;
   INT32         CursorX, CursorY;
+  UINTN         Laps = 0;
 
   SbLogInit ();
   SbLog ("[sbios] enter", 0, 0);
@@ -46,6 +50,16 @@ SbBiosMain (
 
     if (Type == EV_NONE) {
       gBS->Stall (FRAME_STALL_US);
+      if (Screen == SCR_SETUP) {
+        /* clock + sensors keep moving while nobody touches the box */
+        if (++Laps >= SENSOR_TICK_LAPS) {
+          Laps = 0;
+          SetupTick ();
+          InputGetCursor (&CursorX, &CursorY);
+          GfxSetCursor (CursorX, CursorY, TRUE);
+          GfxPresent ();
+        }
+      }
       continue;
     }
 
@@ -56,6 +70,8 @@ SbBiosMain (
       GfxPresent ();
       continue;
     }
+
+    Laps = 0;
 
     if (Screen == SCR_BOOT) {
       BootEvent (&Event);
