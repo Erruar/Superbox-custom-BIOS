@@ -606,7 +606,6 @@ DrawTabs (
   mTabY = PADX ();
   mTabH = A (SbSyne16) + (INT32)(12 * Sc);
   mTabCount = 0;
-  SbLog ("[tabs] geo", mTabH, A (SbSyne16));
 
   for (F = mAll; F != NULL && mTabCount < MAX_TABS - 1; F = F->Next) {
     CHAR16  *Title = F->Title != NULL ? F->Title : L"(unnamed)";
@@ -1081,12 +1080,10 @@ RowAt (
   INT32  I;
 
   if ((Y < Top) || (mRowCount == 0)) {
-    SbLog ("[rowat] miss", Top, Y);
     return -1;
   }
   I = (Y - Top) / RH ();
   if ((I < 0) || (mTop + (UINTN)I >= mRowCount)) {
-    SbLog ("[rowat] oob", Top, (UINTN)I);
     return -1;
   }
   return (INT32)(mTop + (UINTN)I);
@@ -1336,7 +1333,6 @@ SetupEvent (
   if (E->Type == EV_MOVE) {
     return;
   }
-  SbLog ("[sev] type", E->Type, (UINTN)((E->X << 16) | (E->Y & 0xFFFF)));
 
   if (E->Type == EV_WHEEL) {
     if ((mMode == MODE_LIST) && (mRowCount > 0)) {
@@ -1393,7 +1389,6 @@ SetupEvent (
     {
       INT32  R = RowAt (E->Y);
 
-      SbLog ("[sev] click row", E->Y, R);
       if (R >= 0) {
         mSel = (UINTN)R;
         if (IsSelectable (mRows[mSel])) {
