@@ -18,6 +18,7 @@ FDIR = Path(__file__).resolve().parent.parent / "fonts"
 GF = "https://github.com/google/fonts/raw/main/ofl/"
 FONT_SOURCES = {
     "SpaceMono-Regular.ttf":   GF + "spacemono/SpaceMono-Regular.ttf",
+    "SpaceMono-Bold.ttf":      GF + "spacemono/SpaceMono-Bold.ttf",
     "IBMPlexMono-Regular.ttf": GF + "ibmplexmono/IBMPlexMono-Regular.ttf",
     "Syne-var.ttf":            GF + "syne/Syne%5Bwght%5D.ttf",
     # DejaVu (Bitstream Vera license, permissive) ships with matplotlib
@@ -48,6 +49,7 @@ ARROWS = [0x2191, 0x2193, 0x21B5, 0x21C5]
 
 ALL = sorted(set(LATIN + CYR + ARROWS))
 SET_SYNE = sorted(set(LATIN))
+SET_BMON = sorted(set(LATIN + ARROWS))   # bold dashboard values: Latin + arrows
 
 # (name, [(font file, size, codes, variation axes or None), ...]) - earlier
 # entries win; later fonts fill the glyphs the primary one lacks (Cyrillic,
@@ -65,6 +67,8 @@ SPECS = [
     ("SbMono16", [("SpaceMono-Regular.ttf", 16, ALL, None),
                   ("IBMPlexMono-Regular.ttf", 16, ALL, None),
                   ("DejaVuSansMono.ttf", 16, ALL, None)]),
+    ("SbMonoB16", [("SpaceMono-Bold.ttf", 16, SET_BMON, None),
+                   ("DejaVuSansMono.ttf", 16, ARROWS, None)]),
     ("SbSyne64", [("Syne-var.ttf", 64, SET_SYNE, [600])]),
     ("SbSyne34", [("Syne-var.ttf", 34, SET_SYNE, [600]),
                   ("IBMPlexMono-Regular.ttf", 34, ALL, None),

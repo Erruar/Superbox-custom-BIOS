@@ -758,8 +758,10 @@ StatPair (
   T (SbSyne16, X, *Y, L1, COL_INK);
   T (SbSyne16, X2, *Y, L2, COL_INK);
   *Y += (INT32)(26 * Sc);
-  T (SbMono16, X, *Y, V1, COL_INK);
-  T (SbMono16, X2, *Y, V2, COL_INK);
+  /* values in Space Mono Bold: the plain mono strokes vanished into the
+   * paper at this size, the concept sets the numbers bold */
+  T (SbMonoB16, X, *Y, V1, COL_INK);
+  T (SbMonoB16, X2, *Y, V2, COL_INK);
   *Y += (INT32)(30 * Sc);
 }
 
@@ -946,11 +948,12 @@ DrawContent (
       continue;
     } else if (R->Kind == ST_REF) {
       CHAR16  Line[256];
-      /* the arrow sits right behind the name, like the concept's
-       * "System Log >" row; the active row is the orange fill, and
+      /* the arrow one space behind the name ("Boot Manager >"), set in
+       * Syne Semibold like the concept's sub-page rows; 16px, same size
+       * as the rest of the list.  The active row is the orange fill,
        * nothing gets an extra outline */
-      UnicodeSPrint (Line, sizeof (Line), L"%s  >", Prompt);
-      T (SbMono16, X, Y + A (SbMono16) - 2 * Sc, Line,
+      UnicodeSPrint (Line, sizeof (Line), L"%s >", Prompt);
+      T (SbSyne16, X, Y + A (SbSyne16) - 2 * Sc, Line,
          Selr ? COL_WHITE : COL_INK);
       Y += RH ();
       continue;

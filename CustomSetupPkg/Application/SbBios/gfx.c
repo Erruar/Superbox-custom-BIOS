@@ -396,7 +396,9 @@ SketchLine (
   if (Len / Step >= 127) {
     Step = Len / 127 + 1;
   }
-  O0 = (INT32)(Noise (&State) % 5) - 2;
+  /* the stroke starts exactly on the nominal point: corner brackets
+   * then sit level across boxes, the wobble lives in the middle */
+  O0 = 0;
   for (I = Step; ; I += Step) {
     P1 = I < Len ? I : Len;
     O1 = (INT32)(Noise (&State) % 5) - 2;
