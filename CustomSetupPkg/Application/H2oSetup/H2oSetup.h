@@ -43,6 +43,8 @@
 EFI_STATUS SbLogInit (VOID);
 VOID       SbLogStr (IN CONST CHAR8  *Line);
 VOID       SbLog (IN CONST CHAR8  *Tag, IN UINTN V1, IN UINTN V2);
+VOID       SbLog6 (IN CONST CHAR8  *Tag, IN UINTN V1, IN UINTN V2,
+                   IN UINTN V3, IN UINTN V4, IN UINTN V5, IN UINTN V6);
 
 /* ---------------------------------------------------------------- palette
  * Saku Overclock light theme: grey paper, orange accent, ink text.

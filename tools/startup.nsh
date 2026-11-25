@@ -11,6 +11,6 @@ connect -r
 echo [startup] pointer inventory after drivers
 fs0:\EFI\BOOT\SBPINFO.EFI
 pause
-echo [startup] launching setup UI
+echo [startup] launching boot menu
 fs0:\EFI\BOOT\BOOTX64.EFI
-echo [startup] setup UI exited
+echo [startup] boot menu exited

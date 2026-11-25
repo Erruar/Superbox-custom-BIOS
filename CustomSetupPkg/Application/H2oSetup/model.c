@@ -580,6 +580,7 @@ ParseIfr (
   FORMSET            *Fs = NULL;
   FORM               *Form = NULL;
   STMT               *St = NULL;
+  UINTN              TraceLeft = 600;   /* field debugging budget */
 
   Ptr = Base;
   End = Base + Size;
@@ -588,6 +589,20 @@ ParseIfr (
     EFI_IFR_OP_HEADER  *H   = (EFI_IFR_OP_HEADER *)Ptr;
     UINT8              Len  = (UINT8)(Ptr[1] & 0x7F);
     BOOLEAN            Scope = (Ptr[1] & 0x80) != 0;
+
+    /*
+     * Raw opcode trace, logged to the USB stick: the hardware's Insyde H2O
+     * packs reference subforms our parser has never seen, so capture the
+     * exact byte stream and analyze it offline.
+     */
+    if (TraceLeft > 0) {
+      TraceLeft--;
+      SbLog6 ("[model] op", (UINTN)(Ptr - Base), H->OpCode, Len,
+              Scope, (UINTN)Ptr[2] | ((UINTN)Ptr[3] << 8) |
+              ((UINTN)Ptr[4] << 16) | ((UINTN)Ptr[5] << 24),
+              (UINTN)Ptr[6] | ((UINTN)Ptr[7] << 8) | ((UINTN)Ptr[8] << 16) |
+              ((UINTN)Ptr[9] << 24));
+    }
 
     if (Len < 2) {
       break;

@@ -47,6 +47,7 @@
 [Components]
   CustomSetupPkg/Application/H2oSetup/H2oSetup.inf
   CustomSetupPkg/Application/SbPointerInfo/SbPointerInfo.inf
+  CustomSetupPkg/Application/SbBoot/SbBoot.inf
 
   #
   # Stock pointer drivers, not part of the QEMU OVMF image.  They are built

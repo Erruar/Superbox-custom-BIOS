@@ -24,7 +24,8 @@ New-Item -ItemType Directory -Force -Path $Work | Out-Null
 
 if (-not (Test-Path "$Repo\build\H2oSetup.efi")) { throw 'no build\H2oSetup.efi, run tools\build.ps1 first' }
 $Extra = @(
-    "$Repo\build\H2oSetup.efi=BOOTX64.EFI"
+    "$Repo\build\SbBoot.efi=BOOTX64.EFI"
+    "$Repo\build\H2oSetup.efi=H2OSETUP.EFI"
     "$Repo\build\UsbMouseDxe.efi=MOUSEDXE.EFI"
     "$Repo\build\UsbMouseAbsolutePointerDxe.efi=ABSDXE.EFI"
     "$Repo\build\SbPointerInfo.efi=SBPINFO.EFI"

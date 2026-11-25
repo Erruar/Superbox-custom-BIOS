@@ -27,6 +27,12 @@ Write-Host '[build] mirroring CustomSetupPkg'
 robocopy "$Repo\CustomSetupPkg" "$Workspace\CustomSetupPkg" /MIR /XJ /NFL /NDL /NJH /NJS | Out-Null
 if ($LASTEXITCODE -gt 7) { throw "package mirror failed: $LASTEXITCODE" }
 
+# EDK2's generated dependency lists are unreliable on this Windows/make combo:
+# header-only changes (palettes, font data) can be missed.  Our modules are
+# tiny, so bump every mirrored source to force an honest recompile.
+Get-ChildItem "$Workspace\CustomSetupPkg" -Recurse -Include *.c,*.h,*.inf,*.dsc |
+    ForEach-Object { $_.LastWriteTime = Get-Date }
+
 # Build dir is regenerated on every run: keep it out of the mirror.
 $BuildDir = Join-Path $Workspace 'Build'
 if ($Clean -and (Test-Path $BuildDir)) {
@@ -53,7 +59,7 @@ if ($Out) {
 }
 
 # QEMU helper drivers (the stock OVMF image has no USB mouse support)
-foreach ($name in 'UsbMouseDxe.efi', 'UsbMouseAbsolutePointerDxe.efi', 'SbPointerInfo.efi', 'VirtioInputDxe.efi') {
+foreach ($name in 'UsbMouseDxe.efi', 'UsbMouseAbsolutePointerDxe.efi', 'SbPointerInfo.efi', 'VirtioInputDxe.efi', 'SbBoot.efi') {
     $Drv = Get-ChildItem "$Workspace\Build" -Recurse -Filter $name -EA SilentlyContinue |
            Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($Drv) {

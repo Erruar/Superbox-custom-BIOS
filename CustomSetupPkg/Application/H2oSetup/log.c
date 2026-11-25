@@ -103,3 +103,22 @@ SbLog (
                (UINT32)mLogSeq++, Tag, (UINT32)V1, (UINT32)V2);
   SbLogStr (Line);
 }
+
+VOID
+SbLog6 (
+  IN CONST CHAR8  *Tag,
+  IN UINTN        V1,
+  IN UINTN        V2,
+  IN UINTN        V3,
+  IN UINTN        V4,
+  IN UINTN        V5,
+  IN UINTN        V6
+  )
+{
+  CHAR8  Line[160];
+
+  AsciiSPrint (Line, sizeof (Line), "[%5d] %a %u %u 0x%x 0x%x 0x%x 0x%x\r\n",
+               (UINT32)mLogSeq++, Tag, (UINT32)V1, (UINT32)V2, (UINT32)V3,
+               (UINT32)V4, (UINT32)V5, (UINT32)V6);
+  SbLogStr (Line);
+}
