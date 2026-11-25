@@ -98,6 +98,14 @@ VOID       GfxSketchFrame (INT32 X, INT32 Y, INT32 W, INT32 H, UINT32 Seed,
                            UINT32 Color);
 VOID       GfxCorners (INT32 X, INT32 Y, INT32 W, INT32 H, INT32 Arm,
                        INT32 T, UINT32 Color);
+#define    PC_TL  0x1u
+#define    PC_TR  0x2u
+#define    PC_BL  0x4u
+#define    PC_BR  0x8u
+#define    PC_ALL (PC_TL | PC_TR | PC_BL | PC_BR)
+VOID       GfxPencilCorners (INT32 X, INT32 Y, INT32 W, INT32 H, INT32 Arm,
+                             INT32 T, UINT32 Seed, UINT32 Corners,
+                             UINT32 Color);
 
 VOID       GfxSetCursor (INT32 X, INT32 Y, BOOLEAN Visible);
 EFI_STATUS GfxPresent (VOID);

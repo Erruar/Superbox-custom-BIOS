@@ -53,6 +53,7 @@ STATIC EFI_STATUS  mModelStatus = EFI_NOT_STARTED;
 STATIC INT32     mTabX[MAX_TABS];
 STATIC INT32     mTabW[MAX_TABS];
 STATIC INT32     mTabY;
+STATIC INT32     mBoxAEnd;      /* bottom of the "superbox" bracket box */
 STATIC INT32     mTabH;
 STATIC FORMSET  *mTabFs[MAX_TABS];
 STATIC UINTN     mTabCount = 0;
@@ -63,7 +64,7 @@ STATIC UINTN     mTabCount = 0;
 #define T(f,x,b,s,c)       GfxText (x, b, FONT (f), s, c, S ())
 #define TW(f,s)            GfxTextW (FONTW (f), s, S ())
 #define RH()               ((INT32)(22 * S ()))
-#define CONTENT_X()        ((INT32)(GfxWidth () * 31 / 100))
+#define CONTENT_X()        ((INT32)(GfxWidth () * 24 / 100))
 #define CONTENT_W()        ((INT32)GfxWidth () - CONTENT_X () - PADX ())
 
 /*
@@ -175,6 +176,31 @@ FooterTop (
   return (INT32)GfxHeight () - (INT32)(46 * S ());
 }
 
+/*
+ * The concept's panel grid.  Every panel is bounded by pencil corner
+ * brackets only; the dashboard (Monitor) box and the Help Info box end
+ * at the same bottom line, and the "superbox" box starts at the same
+ * top line as the tab row.
+ */
+STATIC
+INT32
+ContentBottom (
+  VOID
+  )
+{
+  return FooterTop () - (INT32)(18 * S ());
+}
+
+STATIC
+INT32
+HelpTop (
+  VOID
+  )
+{
+  return ContentBottom ()
+         - (A (SbSyne22) + A (SbMono16) + (INT32)(46 * S ()));
+}
+
 STATIC
 INT32
 VisibleRows (
@@ -182,7 +208,7 @@ VisibleRows (
   )
 {
   /* leave room for the Help Info block at the bottom of the content */
-  INT32  H = FooterTop () - (INT32)(64 * S ()) - ContentTop ();
+  INT32  H = HelpTop () - (INT32)(14 * S ()) - ContentTop ();
   INT32  N = H / RH ();
 
   return N > 1 ? N : 1;
@@ -698,6 +724,7 @@ STATIC
 VOID
 StatPair (
   IN INT32      X,
+  IN INT32      X2,
   IN OUT INT32  *Y,
   IN CHAR16     *L1,
   IN CHAR16     *V1,
@@ -708,11 +735,11 @@ StatPair (
   INT32  Sc = S ();
 
   T (SbSyne16, X, *Y, L1, COL_INK);
-  T (SbSyne16, X + (INT32)(95 * Sc), *Y, L2, COL_INK);
-  *Y += (INT32)(19 * Sc);
+  T (SbSyne16, X2, *Y, L2, COL_INK);
+  *Y += (INT32)(26 * Sc);
   T (SbMono16, X, *Y, V1, COL_INK);
-  T (SbMono16, X + (INT32)(95 * Sc), *Y, V2, COL_INK);
-  *Y += (INT32)(22 * Sc);
+  T (SbMono16, X2, *Y, V2, COL_INK);
+  *Y += (INT32)(30 * Sc);
 }
 
 STATIC
@@ -722,13 +749,15 @@ DrawLeft (
   )
 {
   INT32  W = (INT32)GfxWidth ();
-  INT32  H = (INT32)GfxHeight ();
   INT32  Sc = S ();
   INT32  X = PADX ();
   INT32  LCW = CONTENT_X () - PADX () - (INT32)(20 * Sc);
+  INT32  Pt = Sc >= 2 ? 2 : 1;    /* pencil line: thinner than before */
+  INT32  Arm = (INT32)(16 * Sc);
+  INT32  BoxB;
   INT32  Y, Tw;
 
-  Y = PADX () + A (SbSyne30);       /* baseline, so the glyphs stay in the frame */
+  Y = PADX () + (INT32)(14 * Sc) + A (SbSyne30);  /* baseline, glyph tops clear the box corners */
 
   /* superbox / clock + gear / date / weekday */
   T (SbSyne30, X, Y, L"superbox", COL_INK);
@@ -743,39 +772,59 @@ DrawLeft (
   Y += A (SbMono24) + (INT32)(6 * Sc);
 
   T (SbSyne26, X, Y, mHw.Weekday, COL_INK);
-  Y += A (SbSyne26) + (INT32)(30 * Sc);
+
+  /* The "superbox" bracket box: its top line sits on the same row as
+   * the tab chips, its bottom just clears the weekday */
+  mBoxAEnd = Y + (INT32)(16 * Sc);
+  GfxPencilCorners (X - (INT32)(10 * Sc), mTabY,
+                    LCW + (INT32)(20 * Sc), mBoxAEnd - mTabY,
+                    Arm, Pt, 0x9B41Du, PC_ALL, COL_INK);
+
+  /* The dashboard bracket box: starts below box A and ends on the
+   * same bottom line as the Help Info box (see DrawContent) */
+  BoxB = mBoxAEnd + (INT32)(30 * Sc);
+  Y = BoxB + (INT32)(20 * Sc);
 
   /* ▣ Monitor */
   GfxFill (X, Y, (INT32)(12 * Sc), (INT32)(12 * Sc), COL_INK);
   GfxFill (X + 3 * Sc, Y + 3 * Sc, (INT32)(6 * Sc), (INT32)(6 * Sc), COL_BG);
   T (SbSyne22, X + (INT32)(20 * Sc), Y + 6 * Sc + A (SbSyne22) / 2,
      L"Monitor", COL_INK);
-  Y += A (SbSyne26) + (INT32)(28 * Sc);   /* clear the Monitor baseline */
+  Y += A (SbSyne26) + (INT32)(30 * Sc);   /* clear the Monitor baseline */
 
   /* CPU */
   T (SbSyne26, X, Y, L"CPU", COL_INK);
   Y += A (SbSyne26) + (INT32)(16 * Sc);
-  StatPair (X, &Y, L"Frequency", mHw.CpuFreq, L"Temperature", mHw.CpuTemp);
-  StatPair (X, &Y, L"BCLK", mHw.CpuBclk, L"Voltage", mHw.CpuVolt);
+  StatPair (X, X + LCW * 46 / 100, &Y, L"Frequency", mHw.CpuFreq,
+            L"Temperature", mHw.CpuTemp);
+  StatPair (X, X + LCW * 46 / 100, &Y, L"BCLK", mHw.CpuBclk,
+            L"Voltage", mHw.CpuVolt);
 
   GfxSketchH (X, Y, LCW, (UINT32)(X * 131 + Y), COL_INK);
   Y += A (SbSyne26) + (INT32)(10 * Sc);   /* clear the rule, then the glyph tops */
 
   T (SbSyne26, X, Y, L"MEMORY", COL_INK);
   Y += A (SbSyne26) + (INT32)(16 * Sc);
-  StatPair (X, &Y, L"Frequency", mHw.MemFreq, L"Voltage", mHw.MemVolt);
+  StatPair (X, X + LCW * 46 / 100, &Y, L"Frequency", mHw.MemFreq,
+            L"Voltage", mHw.MemVolt);
 
   GfxSketchH (X, Y, LCW, (UINT32)(X * 977 + Y * 7), COL_INK);
   Y += A (SbSyne26) + (INT32)(10 * Sc);
 
   T (SbSyne26, X, Y, L"iGPU", COL_INK);
   Y += A (SbSyne26) + (INT32)(16 * Sc);
-  StatPair (X, &Y, L"Frequency", mHw.GpuFreq, L"Voltage", mHw.GpuVolt);
+  StatPair (X, X + LCW * 46 / 100, &Y, L"Frequency", mHw.GpuFreq,
+            L"Voltage", mHw.GpuVolt);
+
+  /* Close the dashboard box on the Help Info bottom line */
+  GfxPencilCorners (X - (INT32)(10 * Sc), BoxB,
+                    LCW + (INT32)(20 * Sc), ContentBottom () - BoxB,
+                    Arm, Pt, 0x1F77Au, PC_ALL, COL_INK);
 
   /* CPU brand under the dashboard when it fits */
   if (mHw.Brand[0] != 0) {
     Tw = TW (SbMono16, mHw.Brand);
-    if (Tw <= LCW && Y + A (SbMono16) < H - FooterTop ()) {
+    if ((Tw <= LCW) && (Y + (INT32)(10 * Sc) + A (SbMono16) < ContentBottom ())) {
       T (SbMono16, X, Y + (INT32)(10 * Sc), mHw.Brand, COL_INK);
     }
   }
@@ -794,31 +843,20 @@ DrawContent (
   INT32      Sc = S ();
   INT32      Y, Bottom, I;
   INT32      ValX = X + CW * 47 / 100;
+  INT32      Pt = Sc >= 2 ? 2 : 1;    /* pencil line: thinner than before */
+  INT32      Arm = (INT32)(16 * Sc);
 
-    /*
-     * The mock's frame: brackets at three corners (top-left stays free for
-     * the "superbox" wordmark) plus bracket pairs at the middle of every
-     * edge, all 2 px like the hand-drawn rules.
-     */
-    {
-      INT32  X0 = PADX () / 2, Y0 = PADX () / 2;
-      INT32  X1 = (INT32)GfxWidth () - PADX ();
-      INT32  Y1 = (INT32)GfxHeight () - PADX ();
-      INT32  Arm  = (INT32)(18 * Sc);
-      INT32  MidX = (X0 + X1) / 2;
-      INT32  MidY = (Y0 + Y1) / 2;
-
-      GfxFill (X1 - Arm, Y0, Arm, 2, COL_INK);       /* top-right      */
-      GfxFill (X1 - 2, Y0, 2, Arm, COL_INK);
-      GfxFill (X0, Y1 - 2, Arm, 2, COL_INK);         /* bottom-left    */
-      GfxFill (X0, Y1 - Arm, 2, Arm, COL_INK);
-      GfxFill (X1 - Arm, Y1 - 2, Arm, 2, COL_INK);   /* bottom-right   */
-      GfxFill (X1 - 2, Y1 - Arm, 2, Arm, COL_INK);
-      GfxCorners (X0, MidY - Arm, Arm, 2 * Arm, Arm / 2, 2, COL_INK);
-      GfxCorners (X1 - Arm, MidY - Arm, Arm, 2 * Arm, Arm / 2, 2, COL_INK);
-      GfxCorners (MidX - Arm, Y0, 2 * Arm, Arm, Arm / 2, 2, COL_INK);
-      GfxCorners (MidX - Arm, Y1 - Arm, 2 * Arm, Arm, Arm / 2, 2, COL_INK);
-    }
+  /*
+   * The concept's grid, corner brackets only (no closed frames): one
+   * big box from just above the tab row down to ContentBottom, the
+   * "superbox" and Monitor boxes in the left column (the Monitor box
+   * and the Help Info box end on the same line, the "superbox" box
+   * starts on the tab row's line), and the Help Info box on the right.
+   */
+  GfxPencilCorners (PADX () / 2, PADX () / 2,
+                    (INT32)GfxWidth () - PADX () - PADX () / 2,
+                    ContentBottom () - PADX () / 2,
+                    Arm, Pt, 0xB0B8DU, PC_ALL, COL_INK);
 
   if (EFI_ERROR (mModelStatus) || (mAll == NULL)) {
     T (SbSyne22, X, ContentTop (),
@@ -828,19 +866,20 @@ DrawContent (
     return;
   }
 
-  /* form title: the vendor's FORM title, not a fixed label */
+  /* form title: the vendor's FORM title, not a fixed label.  The
+   * baseline keeps the glyph tops below the tab chips' bottom edge */
   if (mForm != NULL && mForm->Title != NULL) {
-    T (SbSyne22, X, ContentTop () - (INT32)(26 * Sc), mForm->Title, COL_INK);
+    T (SbSyne22, X, ContentTop () - (INT32)(14 * Sc), mForm->Title, COL_INK);
   }
   if (mStatus[0] != 0) {
     INT32  Sw = TW (SbMono16, mStatus);
 
-    T (SbMono16, X + CW - Sw, ContentTop () - (INT32)(26 * Sc), mStatus,
+    T (SbMono16, X + CW - Sw, ContentTop () - (INT32)(14 * Sc), mStatus,
        COL_INK);
   }
 
   Y = ContentTop ();
-  Bottom = FooterTop () - (INT32)(70 * Sc);
+  Bottom = HelpTop () - (INT32)(14 * Sc);
 
   if (mForm == NULL) {
     T (SbMono16, X, Y, L"This formset publishes no forms.", COL_INK);
@@ -879,18 +918,12 @@ DrawContent (
       continue;
     } else if (R->Kind == ST_REF) {
       CHAR16  Line[256];
-      INT32   Tw;
-
-      /* mockup style: the arrow sits right behind the name, inside a
-       * hand-drawn box (the "System Log >" frame of the concept) */
+      /* the arrow sits right behind the name, like the concept's
+       * "System Log >" row; the active row is the orange fill, and
+       * nothing gets an extra outline */
       UnicodeSPrint (Line, sizeof (Line), L"%s  >", Prompt);
       T (SbMono16, X, Y + A (SbMono16) - 2 * Sc, Line,
          Selr ? COL_WHITE : COL_INK);
-      Tw = TW (SbMono16, Line);
-      GfxSketchFrame (X - 6 * Sc, Y - 4 * Sc, Tw + 12 * Sc,
-                      RH () + 6 * Sc,
-                      (UINT32)(I * 733 + mForm->Id * 31),
-                      Selr ? COL_WHITE : COL_INK);
       Y += RH ();
       continue;
     } else {
@@ -921,22 +954,22 @@ DrawContent (
     GfxFill (W - PADX () / 2, ContentTop () + Pos, Sc, Thumb, COL_ORANGE);
   }
 
-  /* Help Info block, boxed like the concept */
+  /* Help Info block: corner brackets only, bottom aligned with the
+   * Monitor box (both end at ContentBottom) */
   {
-    INT32  Hy = FooterTop () - (INT32)(52 * Sc);
-    INT32  Bw = CW + (INT32)(14 * Sc);
+    INT32  Hy = HelpTop ();
+    INT32  Ty = Hy + (INT32)(14 * Sc) + A (SbSyne22);
 
-    GfxSketchFrame (X - (INT32)(10 * Sc),
-                    Hy - A (SbSyne22) - (INT32)(10 * Sc),
-                    Bw, A (SbSyne22) + A (SbMono16) + (INT32)(42 * Sc),
-                    0x5E12C0DEu, COL_INK);
-    T (SbSyne22, X, Hy, L"Help Info", COL_INK);
+    GfxPencilCorners (X - (INT32)(10 * Sc), Hy,
+                      CW + (INT32)(20 * Sc), ContentBottom () - Hy,
+                      Arm, Pt, 0x5E12C0DEu, PC_ALL, COL_INK);
+    T (SbSyne22, X, Ty, L"Help Info", COL_INK);
     if (mSel < mRowCount && mRows[mSel] != NULL &&
         mRows[mSel]->Prompt != NULL) {
-      T (SbMono16, X, Hy + A (SbSyne22) + (INT32)(18 * Sc),
+      T (SbMono16, X, Ty + A (SbMono16) + (INT32)(16 * Sc),
          mRows[mSel]->Prompt, COL_INK);
     } else {
-      T (SbMono16, X, Hy + A (SbSyne22) + (INT32)(18 * Sc),
+      T (SbMono16, X, Ty + A (SbMono16) + (INT32)(16 * Sc),
          L"Select option to see help string", COL_INK);
     }
   }
@@ -1121,10 +1154,11 @@ DrawHelp (
     L"+ / -     video mode"
   };
 
-  Y = PanY + (INT32)(14 * Sc) + A (SbSyne22);   /* baseline below the frame */
+  Y = PanY + (INT32)(14 * Sc) + A (SbSyne22);   /* baseline below the corners */
   GfxFill (PanX, PanY, PanW, PanH, COL_BG);
-  GfxSketchFrame (PanX, PanY, PanW, PanH, (UINT32)(PanX * 17 + PanY),
-                  COL_INK);
+  GfxPencilCorners (PanX, PanY, PanW, PanH, (INT32)(18 * Sc),
+                    Sc >= 2 ? 2 : 1, (UINT32)(PanX * 17 + PanY), PC_ALL,
+                    COL_INK);
   T (SbSyne22, PanX + (INT32)(16 * Sc), Y, L"Hot keys", COL_INK);
   Y += A (SbSyne22) + (INT32)(16 * Sc);
   for (I = 0; I < sizeof (Lines) / sizeof (Lines[0]); I++) {

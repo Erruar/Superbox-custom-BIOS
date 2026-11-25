@@ -462,12 +462,13 @@ BootDraw (
   /* headline */
   GfxText (Mar, H * 13 / 100, FONT (SbSyne64), TITLE_TXT, COL_INK, 1);
 
-  /* card block corner brackets from the mockup */
+  /* card block: hand-drawn corner brackets, thin pencil stroke */
   {
     INT32  Bx = Xc - 10, By = Y0 - 10;
     INT32  Bw = Wc + 20, Bh = ITEMS * Ch + (ITEMS - 1) * Gap + 20;
 
-    GfxCorners (Bx, By, Bw, Bh, 14, 3, COL_INK);
+    GfxPencilCorners (Bx, By, Bw, Bh, 16, 1, (UINT32)(Bx + By * 7),
+                      PC_ALL, COL_INK);
   }
 
   Pre[0] = LBL_LAST;

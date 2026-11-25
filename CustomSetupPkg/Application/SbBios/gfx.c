@@ -321,8 +321,8 @@ GfxGear (
    * into slivers at the small radii used at 1280x1024, so this is
    * fill-primitive based and exact at every scale.
    */
-  STATIC CONST INT32  Dx[8] = {  0,  1,  0,  1,  0, -1,  0, -1 };
-  STATIC CONST INT32  Dy[8] = { -1,  0,  1,  0,  1,  0, -1,  0 };
+  STATIC CONST INT32  Dx[8] = {  0,  1,  1,  1,  0, -1, -1, -1 };
+  STATIC CONST INT32  Dy[8] = { -1, -1,  0,  1,  1,  1,  0, -1 };
   INT32  Disc = R * 78 / 100;
   INT32  Card = R * 82 / 100;
   INT32  Diag = R * 58 / 100;
@@ -361,6 +361,7 @@ SketchLine (
   IN INT32   X,
   IN INT32   Y,
   IN INT32   Len,
+  IN INT32   Thickness,
   IN BOOLEAN Horizontal,
   IN UINT32  Seed,
   IN UINT32  Color
@@ -368,7 +369,7 @@ SketchLine (
 {
   UINT32  State = Seed | 1;
   INT32   Step  = 9;
-  INT32   I, Node, P1, O0, O1;
+  INT32   I, Node, P1, O0, O1, D;
   INT32   Nodes[128][3];
   INT32   Count = 0;
 
@@ -412,12 +413,12 @@ SketchLine (
     for (K = 0; K <= Span; K++) {
       INT32  O = Oa + (Ob - Oa) * K / (Span == 0 ? 1 : Span);
 
-      if (Horizontal) {
-        Plot (X + Pa + K, Y + O, Color);
-        Plot (X + Pa + K, Y + O + 1, Color);
-      } else {
-        Plot (X + O, Y + Pa + K, Color);
-        Plot (X + O + 1, Y + Pa + K, Color);
+      for (D = 0; D < Thickness; D++) {
+        if (Horizontal) {
+          Plot (X + Pa + K, Y + O + D, Color);
+        } else {
+          Plot (X + O + D, Y + Pa + K, Color);
+        }
       }
     }
   }
@@ -432,7 +433,7 @@ GfxSketchH (
   IN UINT32  Color
   )
 {
-  SketchLine (X, Y, Len, TRUE, Seed, Color);
+  SketchLine (X, Y, Len, 2, TRUE, Seed, Color);
 }
 
 VOID
@@ -444,7 +445,7 @@ GfxSketchV (
   IN UINT32  Color
   )
 {
-  SketchLine (X, Y, Len, FALSE, Seed, Color);
+  SketchLine (X, Y, Len, 2, FALSE, Seed, Color);
 }
 
 VOID
@@ -482,6 +483,42 @@ GfxCorners (
   GfxFill (X, Y + H - Arm, T, Arm, Color);
   GfxFill (X + W - Arm, Y + H - T, Arm, T, Color);
   GfxFill (X + W - T, Y + H - Arm, T, Arm, Color);
+}
+
+/*
+ * Pencil corner brackets: hand-drawn L marks at the box corners, one
+ * wobbly stroke per arm at the requested thickness.  This is the mock's
+ * framing language - the panels are bounded only by their corners.
+ */
+VOID
+GfxPencilCorners (
+  IN INT32   X,
+  IN INT32   Y,
+  IN INT32   W,
+  IN INT32   H,
+  IN INT32   Arm,
+  IN INT32   T,
+  IN UINT32  Seed,
+  IN UINT32  Corners,
+  IN UINT32  Color
+  )
+{
+  if (Corners & PC_TL) {
+    SketchLine (X, Y, Arm, T, TRUE, Seed + 3, Color);
+    SketchLine (X, Y, Arm, T, FALSE, Seed + 5, Color);
+  }
+  if (Corners & PC_TR) {
+    SketchLine (X + W - Arm, Y, Arm, T, TRUE, Seed + 7, Color);
+    SketchLine (X + W - T, Y, Arm, T, FALSE, Seed + 11, Color);
+  }
+  if (Corners & PC_BL) {
+    SketchLine (X, Y + H - T, Arm, T, TRUE, Seed + 13, Color);
+    SketchLine (X, Y + H - Arm, Arm, T, FALSE, Seed + 17, Color);
+  }
+  if (Corners & PC_BR) {
+    SketchLine (X + W - Arm, Y + H - T, Arm, T, TRUE, Seed + 19, Color);
+    SketchLine (X + W - T, Y + H - Arm, Arm, T, FALSE, Seed + 23, Color);
+  }
 }
 
 /* -------------------------------------------------------------- screenshot */
