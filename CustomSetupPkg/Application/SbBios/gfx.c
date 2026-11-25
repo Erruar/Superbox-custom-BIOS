@@ -303,41 +303,9 @@ GfxCircle (
 }
 
 /*
- * Gear icon: 8-tooth polygon in Ink with a disc of Hole color punched into
- * the middle (the mockup's cog = black gear, paper-colored center).
- * sin/cos come from a 10-degree table scaled by 1000 - UEFI apps run
- * without FPU state, so all math here is integer.
+ * Gear icon: a disc with 8 square teeth and a Hole-colored center.
+ * All fill-primitive based: exact at the small radii used at 1280x1024.
  */
-STATIC CONST INT32  mSin1000[10] = {
-  0, 174, 342, 500, 643, 766, 866, 940, 985, 1000
-};
-
-STATIC
-INT32
-SinX1000 (
-  IN INT32  Deg
-  )
-{
-  INT32  Q, K, Interp, Sign = 1;
-
-  Deg %= 360;
-  if (Deg < 0) {
-    Deg += 360;
-  }
-  Q     = Deg / 90;
-  K     = Deg % 90;
-  Interp = mSin1000[K / 10] +
-           (mSin1000[(K / 10) + 1 > 9 ? 9 : (K / 10) + 1] - mSin1000[K / 10]) *
-           (K % 10) / 10;
-  if (Q == 2) {
-    Sign = -1;
-  }
-  if (Q & 1) {
-    return Sign * mSin1000[(90 - K) / 10];
-  }
-  return Sign * Interp;
-}
-
 VOID
 GfxGear (
   IN INT32   Cx,
@@ -347,25 +315,28 @@ GfxGear (
   IN UINT32  Hole
   )
 {
-  INT32  Pts[32][2];
-  UINTN  N = 0;
+  /*
+   * Square-toothed cog: a disc with 8 axis-aligned tooth boxes at the
+   * cardinal and diagonal directions.  A polar polygon star degraded
+   * into slivers at the small radii used at 1280x1024, so this is
+   * fill-primitive based and exact at every scale.
+   */
+  STATIC CONST INT32  Dx[8] = {  0,  1,  0,  1,  0, -1,  0, -1 };
+  STATIC CONST INT32  Dy[8] = { -1,  0,  1,  0,  1,  0, -1,  0 };
+  INT32  Disc = R * 78 / 100;
+  INT32  Card = R * 82 / 100;
+  INT32  Diag = R * 58 / 100;
+  INT32  Half = MAX (2, R * 27 / 100);
   UINTN  T;
 
-  /* 8 teeth x 4 points: root, tip, tip, root per 45-degree sector */
-  for (T = 0; T < 8 && N < 32; T++) {
-    INT32  A0 = (INT32)T * 45;
-    INT32  Ang[4] = { A0 - 16, A0 - 8, A0 + 8, A0 + 16 };
-    INT32  Rad[4] = { R * 72 / 100, R, R, R * 72 / 100 };
-    UINTN  I;
+  for (T = 0; T < 8; T++) {
+    INT32  Ox = Dx[T] * (Dy[T] != 0 ? Diag : Card);
+    INT32  Oy = Dy[T] * (Dx[T] != 0 ? Diag : Card);
 
-    for (I = 0; I < 4; I++) {
-      Pts[N][0] = Cx + Rad[I] * SinX1000 (Ang[I] + 90) / 1000;
-      Pts[N][1] = Cy - Rad[I] * SinX1000 (Ang[I]) / 1000;
-      N++;
-    }
+    GfxFill (Cx + Ox - Half, Cy + Oy - Half, 2 * Half + 1, 2 * Half + 1, Ink);
   }
-  GfxPolyFill (Pts, N, Ink);
-  GfxCircle (Cx, Cy, R * 38 / 100, Hole, TRUE);
+  GfxCircle (Cx, Cy, Disc, Ink, TRUE);
+  GfxCircle (Cx, Cy, MAX (2, R * 38 / 100), Hole, TRUE);
 }
 
 /* ------------------------------------------------------ sketchy strokes */

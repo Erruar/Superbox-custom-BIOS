@@ -483,6 +483,50 @@ OpenPopup (
   }
 }
 
+/*
+ * Tiny case-insensitive substring test, enough for prompt matching
+ * (BaseLib in this tree has no SearchString).
+ */
+STATIC
+BOOLEAN
+PromptHas (
+  IN CONST CHAR16  *Prompt,
+  IN CONST CHAR16  *Needle
+  )
+{
+  CONST CHAR16  *P;
+
+  if ((Prompt == NULL) || (Needle == NULL) || (*Needle == 0)) {
+    return FALSE;
+  }
+  for (P = Prompt; *P != 0; P++) {
+    CONST CHAR16  *Q = P;
+    CONST CHAR16  *N = Needle;
+
+    for ( ; ; Q++, N++) {
+      CHAR16  A = *Q;
+      CHAR16  B = *N;
+
+      if (B == 0) {
+        return TRUE;                     /* needle exhausted: matched   */
+      }
+      if (A == 0) {
+        return FALSE;
+      }
+      if (A >= L'a' && A <= L'z') {
+        A -= 32;
+      }
+      if (B >= L'a' && B <= L'z') {
+        B -= 32;
+      }
+      if (A != B) {
+        break;
+      }
+    }
+  }
+  return FALSE;
+}
+
 STATIC
 VOID
 Activate (
@@ -508,9 +552,19 @@ Activate (
       SbLog ("[ui] open form", S->RefFormId, (UINTN)(F != NULL));
       if (F != NULL) {
         SelectForm (Fs, F, TRUE);
+      } else if (PromptHas (S->Prompt, L"Boot")) {
+        /*
+         * Front Page's "Boot Manager" references a form the vendor never
+         * publishes in HII; the stock browser serves it from its own boot
+         * page.  Ours is the SbBios boot menu - go there (flushing vars
+         * first, exactly like F7).
+         */
+        ModelFlush (mFs);
+        mWantBoot = TRUE;
       } else {
         UnicodeSPrint (mStatus, sizeof (mStatus),
-                       L"form 0x%04x not in model", S->RefFormId);
+                       L"form 0x%04x not published by firmware",
+                       S->RefFormId);
       }
       break;
     }
@@ -620,7 +674,7 @@ DrawTabs (
     GfxFill (X, mTabY, SlotW, mTabH, (F == mFs) ? COL_ORANGE : COL_CARD);
     DrawTabIcon (X + (INT32)(6 * Sc), mTabY, Title[0], COL_WHITE);
     T (SbSyne16, X + Icon + (INT32)(4 * Sc),
-       mTabY + (mTabH - A (SbSyne16)) / 2, Label, COL_WHITE);
+       mTabY + (mTabH + A (SbSyne16)) / 2, Label, COL_WHITE);
     X += SlotW + Gap;
   }
 
@@ -636,7 +690,7 @@ DrawTabs (
     GfxFill (X, mTabY, SlotW, mTabH, COL_CARD);
     GfxCircle (X + Icon / 2, mTabY + mTabH / 2, 5 * Sc, COL_WHITE, TRUE);
     T (SbSyne16, X + Icon + (INT32)(4 * Sc),
-       mTabY + (mTabH - A (SbSyne16)) / 2, Title, COL_WHITE);
+       mTabY + (mTabH + A (SbSyne16)) / 2, Title, COL_WHITE);
   }
 }
 
@@ -674,7 +728,7 @@ DrawLeft (
   INT32  LCW = CONTENT_X () - PADX () - (INT32)(20 * Sc);
   INT32  Y, Tw;
 
-  Y = PADX ();
+  Y = PADX () + A (SbSyne30);       /* baseline, so the glyphs stay in the frame */
 
   /* superbox / clock + gear / date / weekday */
   T (SbSyne30, X, Y, L"superbox", COL_INK);
@@ -696,7 +750,7 @@ DrawLeft (
   GfxFill (X + 3 * Sc, Y + 3 * Sc, (INT32)(6 * Sc), (INT32)(6 * Sc), COL_BG);
   T (SbSyne22, X + (INT32)(20 * Sc), Y + 6 * Sc + A (SbSyne22) / 2,
      L"Monitor", COL_INK);
-  Y += (INT32)(30 * Sc);
+  Y += A (SbSyne26) + (INT32)(28 * Sc);   /* clear the Monitor baseline */
 
   /* CPU */
   T (SbSyne26, X, Y, L"CPU", COL_INK);
@@ -705,14 +759,14 @@ DrawLeft (
   StatPair (X, &Y, L"BCLK", mHw.CpuBclk, L"Voltage", mHw.CpuVolt);
 
   GfxSketchH (X, Y, LCW, (UINT32)(X * 131 + Y), COL_INK);
-  Y += (INT32)(24 * Sc);
+  Y += A (SbSyne26) + (INT32)(10 * Sc);   /* clear the rule, then the glyph tops */
 
   T (SbSyne26, X, Y, L"MEMORY", COL_INK);
   Y += A (SbSyne26) + (INT32)(16 * Sc);
   StatPair (X, &Y, L"Frequency", mHw.MemFreq, L"Voltage", mHw.MemVolt);
 
   GfxSketchH (X, Y, LCW, (UINT32)(X * 977 + Y * 7), COL_INK);
-  Y += (INT32)(24 * Sc);
+  Y += A (SbSyne26) + (INT32)(10 * Sc);
 
   T (SbSyne26, X, Y, L"iGPU", COL_INK);
   Y += A (SbSyne26) + (INT32)(16 * Sc);
@@ -741,9 +795,30 @@ DrawContent (
   INT32      Y, Bottom, I;
   INT32      ValX = X + CW * 47 / 100;
 
-  GfxCorners (PADX () / 2, PADX () / 2,
-              (INT32)GfxWidth () - PADX (), (INT32)GfxHeight () - PADX (),
-              (INT32)(18 * Sc), 2 * Sc, COL_INK);
+    /*
+     * The mock's frame: brackets at three corners (top-left stays free for
+     * the "superbox" wordmark) plus bracket pairs at the middle of every
+     * edge, all 2 px like the hand-drawn rules.
+     */
+    {
+      INT32  X0 = PADX () / 2, Y0 = PADX () / 2;
+      INT32  X1 = (INT32)GfxWidth () - PADX ();
+      INT32  Y1 = (INT32)GfxHeight () - PADX ();
+      INT32  Arm  = (INT32)(18 * Sc);
+      INT32  MidX = (X0 + X1) / 2;
+      INT32  MidY = (Y0 + Y1) / 2;
+
+      GfxFill (X1 - Arm, Y0, Arm, 2, COL_INK);       /* top-right      */
+      GfxFill (X1 - 2, Y0, 2, Arm, COL_INK);
+      GfxFill (X0, Y1 - 2, Arm, 2, COL_INK);         /* bottom-left    */
+      GfxFill (X0, Y1 - Arm, 2, Arm, COL_INK);
+      GfxFill (X1 - Arm, Y1 - 2, Arm, 2, COL_INK);   /* bottom-right   */
+      GfxFill (X1 - 2, Y1 - Arm, 2, Arm, COL_INK);
+      GfxCorners (X0, MidY - Arm, Arm, 2 * Arm, Arm / 2, 2, COL_INK);
+      GfxCorners (X1 - Arm, MidY - Arm, Arm, 2 * Arm, Arm / 2, 2, COL_INK);
+      GfxCorners (MidX - Arm, Y0, 2 * Arm, Arm, Arm / 2, 2, COL_INK);
+      GfxCorners (MidX - Arm, Y1 - Arm, 2 * Arm, Arm, Arm / 2, 2, COL_INK);
+    }
 
   if (EFI_ERROR (mModelStatus) || (mAll == NULL)) {
     T (SbSyne22, X, ContentTop (),
@@ -804,11 +879,18 @@ DrawContent (
       continue;
     } else if (R->Kind == ST_REF) {
       CHAR16  Line[256];
+      INT32   Tw;
 
-      /* mockup style: the arrow sits right behind the name */
+      /* mockup style: the arrow sits right behind the name, inside a
+       * hand-drawn box (the "System Log >" frame of the concept) */
       UnicodeSPrint (Line, sizeof (Line), L"%s  >", Prompt);
       T (SbMono16, X, Y + A (SbMono16) - 2 * Sc, Line,
          Selr ? COL_WHITE : COL_INK);
+      Tw = TW (SbMono16, Line);
+      GfxSketchFrame (X - 6 * Sc, Y - 4 * Sc, Tw + 12 * Sc,
+                      RH () + 6 * Sc,
+                      (UINT32)(I * 733 + mForm->Id * 31),
+                      Selr ? COL_WHITE : COL_INK);
       Y += RH ();
       continue;
     } else {
@@ -839,10 +921,15 @@ DrawContent (
     GfxFill (W - PADX () / 2, ContentTop () + Pos, Sc, Thumb, COL_ORANGE);
   }
 
-  /* Help Info block */
+  /* Help Info block, boxed like the concept */
   {
     INT32  Hy = FooterTop () - (INT32)(52 * Sc);
+    INT32  Bw = CW + (INT32)(14 * Sc);
 
+    GfxSketchFrame (X - (INT32)(10 * Sc),
+                    Hy - A (SbSyne22) - (INT32)(10 * Sc),
+                    Bw, A (SbSyne22) + A (SbMono16) + (INT32)(42 * Sc),
+                    0x5E12C0DEu, COL_INK);
     T (SbSyne22, X, Hy, L"Help Info", COL_INK);
     if (mSel < mRowCount && mRows[mSel] != NULL &&
         mRows[mSel]->Prompt != NULL) {
@@ -956,7 +1043,8 @@ DrawPopup (
   GfxSketchFrame (PanX, PanY, PanW, PanH,
                   (UINT32)(PanX * 31 + PanY * 7 + PanW), COL_INK);
 
-  T (SbSyne22, PanX + (INT32)(16 * Sc), PanY + (INT32)(14 * Sc),
+  T (SbSyne22, PanX + (INT32)(16 * Sc),
+     PanY + (INT32)(14 * Sc) + A (SbSyne22),
      mPopup->Prompt != NULL ? mPopup->Prompt : L"Select", COL_INK);
 
   V = ModelVarstore (mFs, mPopup->VarStoreId);
@@ -1000,6 +1088,8 @@ DrawPopup (
   T (SbMono16, PanX + (INT32)(16 * Sc),
      PanY + PanH - (INT32)(14 * Sc) - A (SbMono16),
      L"Enter pick, Esc close, Left/Right step", COL_INK);
+  SbLog6 ("[pop] geom", PanY, PanH, (INT32)mPopup->OptionCount, Y, RH (),
+          mPopup->Kind);
 }
 
 /* --------------------------------------------------------- help overlay */
@@ -1033,12 +1123,12 @@ DrawHelp (
     L"+ / -     video mode"
   };
 
-  Y = PanY + (INT32)(14 * Sc);
+  Y = PanY + (INT32)(14 * Sc) + A (SbSyne22);   /* baseline below the frame */
   GfxFill (PanX, PanY, PanW, PanH, COL_BG);
   GfxSketchFrame (PanX, PanY, PanW, PanH, (UINT32)(PanX * 17 + PanY),
                   COL_INK);
   T (SbSyne22, PanX + (INT32)(16 * Sc), Y, L"Hot keys", COL_INK);
-  Y += A (SbSyne22) + (INT32)(14 * Sc);
+  Y += A (SbSyne22) + (INT32)(16 * Sc);
   for (I = 0; I < sizeof (Lines) / sizeof (Lines[0]); I++) {
     T (SbMono16, PanX + (INT32)(16 * Sc), Y, Lines[I], COL_INK);
     Y += (INT32)(22 * Sc);

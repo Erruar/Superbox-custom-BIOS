@@ -15,6 +15,11 @@
  *   2. Absolute reports that (a) carry no TouchActive/AltActive and (b) sit
  *      in the top corner parking zones are dropped unconditionally.
  *   3. Touches (TouchActive) are honoured as clicks everywhere.
+ *   4. The box's PS/2 touchpad stream emits garbage bursts (hundreds of
+ *      counts per report) that fling the cursor into the corners.  Every
+ *      report is clamped to REL_CLAMP counts, and an instance that bursts
+ *      REL_BURSTS times is blacklisted in favour of the next relative
+ *      device (the USB mouse).
  *
  * Keyboard input comes from ConIn SimpleTextIn; the agent instance handed
  * to shell-launched apps reports EFI_DEVICE_ERROR on CheckEvent, so the
@@ -26,6 +31,9 @@
 #define MAX_POINTER_INSTANCES  8
 #define REL_PRIORITY_TICKS     120      /* ~2s of 16ms polls            */
 #define CORNER_PARK_PCT        4        /* top-corner parking zone, %   */
+#define REL_CLAMP              64       /* per-report movement cap      */
+#define REL_BURST              240      /* beyond: PS/2 touchpad garbage */
+#define REL_BURSTS             3        /* bursts that ban an instance  */
 
 STATIC EFI_ABSOLUTE_POINTER_PROTOCOL  *mAbs[MAX_POINTER_INSTANCES];
 STATIC UINTN                          mAbsCount;
@@ -45,6 +53,8 @@ STATIC UINT64   mPollTick  = 0;
 STATIC UINT64   mLastRelTick = 0;
 STATIC UINTN    mParkDrops = 0;
 STATIC UINTN    mAbsLogged = 0;
+STATIC UINTN    mRelBurst[MAX_POINTER_INSTANCES];  /* per-instance garbage */
+STATIC UINTN    mRelBanMask = 0;                   /* bit set: instance dead */
 
 VOID
 InputSetCursor (
@@ -206,6 +216,8 @@ InputInit (
 
   mAbsActive = 0;
   mRelActive = 0;
+  ZeroMem (mRelBurst, sizeof (mRelBurst));
+  mRelBanMask = 0;
   CollectPointers (&gEfiAbsolutePointerProtocolGuid, TRUE,
                    (VOID **)mAbs, &mAbsCount);
   CollectPointers (&gEfiSimplePointerProtocolGuid, FALSE,
@@ -256,7 +268,14 @@ PollSimplePointer (
 
   for (Try = 0; Try < mRelCount; Try++) {
     Sp = mRel[mRelActive];
+    if (mRelBanMask & (1u << mRelActive)) {
+      mRelActive = (mRelActive + 1) % mRelCount;   /* skip banned stubs  */
+      continue;
+    }
     do {
+      INT32  Dx = 0;
+      INT32  Dy = 0;
+
       Status = Sp->GetState (Sp, &State);
       if (Status == EFI_NOT_READY) {
         break;
@@ -267,8 +286,45 @@ PollSimplePointer (
         break;
       }
 
-      if ((State.RelativeMovementX != 0) || (State.RelativeMovementY != 0)) {
-        MoveCursorRelative (State.RelativeMovementX, State.RelativeMovementY);
+      Dx = State.RelativeMovementX;
+      Dy = State.RelativeMovementY;
+      if (((Dx > REL_BURST) || (Dx < -REL_BURST)) ||
+          ((Dy > REL_BURST) || (Dy < -REL_BURST))) {
+        /* PS/2 touchpad garbage: it flings the cursor into the corners.
+         * Drop the report; persistent offenders get the instance banned. */
+        Moved = TRUE;
+        mLastRelTick = mPollTick;      /* keep the abs priority window */
+        mRelBurst[mRelActive]++;
+        if (mRelBurst[mRelActive] <= 4) {
+          SbLog ("[input] rel burst", mRelActive, mRelBurst[mRelActive]);
+        }
+        if (mRelBurst[mRelActive] >= REL_BURSTS) {
+          /* Banned for good: HID reports cap at 127 counts, a device
+           * that streams >240 is the PS/2 touchpad's garbage.  If every
+           * relative device is banned, the window goes quiet and the
+           * touchscreen (absolute) takes over. */
+          mRelBanMask |= 1u << mRelActive;
+          mRelActive = (mRelActive + 1) % mRelCount;
+        }
+        Status = EFI_NOT_READY;        /* end this instance's drain loop */
+        break;
+      }
+
+      if (Dx > REL_CLAMP) {
+        Dx = REL_CLAMP;
+      }
+      if (Dx < -REL_CLAMP) {
+        Dx = -REL_CLAMP;
+      }
+      if (Dy > REL_CLAMP) {
+        Dy = REL_CLAMP;
+      }
+      if (Dy < -REL_CLAMP) {
+        Dy = -REL_CLAMP;
+      }
+
+      if ((Dx != 0) || (Dy != 0)) {
+        MoveCursorRelative (Dx, Dy);
         Moved = TRUE;
       }
       Wheel += State.RelativeMovementZ;
