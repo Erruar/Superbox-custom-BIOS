@@ -44,18 +44,20 @@ EFI_STATUS SbLogInit (VOID);
 VOID       SbLogStr (IN CONST CHAR8  *Line);
 VOID       SbLog (IN CONST CHAR8  *Tag, IN UINTN V1, IN UINTN V2);
 
-/* ---------------------------------------------------------------- palette */
+/* ---------------------------------------------------------------- palette
+ * Saku Overclock light theme: grey paper, orange accent, ink text.
+ */
 
-#define COL_BG        0x00101826u   /* window background        */
-#define COL_BG_ALT    0x00162032u   /* alternating row          */
-#define COL_SEL       0x002a5f9eu   /* selection highlight      */
-#define COL_HDR       0x000a1018u   /* header / footer bar      */
-#define COL_ACCENT    0x004ab3f4u   /* accent / cursor          */
-#define COL_TEXT      0x00e8eef6u   /* normal text              */
-#define COL_TEXT_DIM  0x008a97a8u   /* secondary text           */
+#define COL_BG        0x00d7d7d7u   /* window background        */
+#define COL_BG_ALT    0x00c8c8c8u   /* alternating row          */
+#define COL_SEL       0x00e05e12u   /* selection highlight      */
+#define COL_HDR       0x00212121u   /* header / footer bar      */
+#define COL_ACCENT    0x00e05e12u   /* accent / cursor          */
+#define COL_TEXT      0x00101010u   /* normal text              */
+#define COL_TEXT_DIM  0x005a5a5au   /* secondary text           */
 #define COL_TEXT_HI   0x00ffffffffu /* text on selection        */
-#define COL_VALUE     0x00ffd166u   /* current value            */
-#define COL_LINE      0x002b3a4eu   /* separators               */
+#define COL_VALUE     0x00212121u   /* current value            */
+#define COL_LINE      0x00a8a8a8u   /* separators               */
 
 /* ------------------------------------------------------------- IFR model */
 

@@ -328,6 +328,18 @@ PollAbsolutePointer (
     RangeX = Ap->Mode->AbsoluteMaxX - Ap->Mode->AbsoluteMinX;
     RangeY = Ap->Mode->AbsoluteMaxY - Ap->Mode->AbsoluteMinY;
 
+    /*
+     * Insyde ships a parked touch-panel stub that keeps reporting the corner
+     * position; moving the cursor from it teleports the pointer.  Ignore a
+     * corner report without an actual touch.
+     */
+    if ((State.ActiveButtons & EFI_ABSP_TouchActive) == 0) {
+      if ((State.CurrentX <= Ap->Mode->AbsoluteMinX) &&
+          (State.CurrentY <= Ap->Mode->AbsoluteMinY)) {
+        break;
+      }
+    }
+
     if (RangeX != 0) {
       mX = (INT32)(((State.CurrentX - Ap->Mode->AbsoluteMinX) *
                     (INT64)(GfxWidth () - 1)) / (INT64)RangeX);
@@ -376,13 +388,13 @@ InputPoll (
     }
   }
 
-  Type = PollAbsolutePointer (Event);
+  Type = PollSimplePointer (Event);
   if (Type != EV_NONE) {
     Event->Type = Type;
     return Type;
   }
 
-  Type = PollSimplePointer (Event);
+  Type = PollAbsolutePointer (Event);
   if (Type != EV_NONE) {
     Event->Type = Type;
     return Type;
