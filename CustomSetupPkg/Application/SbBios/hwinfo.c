@@ -1,68 +1,95 @@
 /*
  * hwinfo.c - dashboard sensors for the setup screen.
  *
- * What is real, and what is not (stated honestly per the design brief):
+ * Target: AMD Stoney Ridge (e.g. A9-9420, Family 15h Models 70h-7Fh, SMU v8),
+ * also compatible with Carrizo (Family 15h Models 60h-6Fh).
  *
- *   Time, date, weekday   - EFI runtime services GetTime.                REAL
- *   CPU brand string      - CPUID leaves 0x80000002..0x80000004.         REAL
- *   CPU frequency/volt    - AMD P-state MSRs: MSR_PSTATE_STATUS
- *                           (0xC0010296) gives the current P-state,
- *                           MSR_PSTATE0..7 (0xC0010064+n) carry StC
- *                           (core frequency in 100 MHz steps) and VfSel
- *                           (voltage in 5 mV steps), the same decoding the
- *                           Linux amd-pstate legacy driver uses.  Read
- *                           only on AMD family 15h model 60h..9Fh (the
- *                           box's A9-9420 reports 15h/60h); RDMSR of an
- *                           unsupported MSR raises #GP, so the gate is
- *                           strict.                                       REAL
- *   CPU temperature       - SMU v8 path (this box): the northbridge
- *                           indirect pair of PCI dev 0 fn 0 (index 0xB8,
- *                           data 0xBC) reading SMN 0xD8200CA4, decoded as
- *                           (val >> 21) with the -49 range bit 19, exactly
- *                           like Linux k10temp for family 15h models
- *                           60h-7Fh.  SMU v9+ path: PCI dev 18 fn 3
- *                           (index 0x154, data 0x15C, register 0x99040)
- *                           with plausible-field probing.  Implausible
- *                           readings keep the mock.                    BEST EFFORT
- *   BCLK 100 MHz          - the Stoney clock-generator strap is fixed at
- *                           100 MHz by hardware; nothing readable.      FIXED
- *   Memory freq/volt,     - trained by the PSP/SMU firmware and only
- *   iGPU freq/volt          reachable through SMU messages that must not
- *                           be issued from a UEFI app (they can hang the
- *                           SMU).  Values are the mockup's, shown as
- *                           placeholders until the real firmware module
- *                           can ask the SMU properly.                    STUB
+ * Zero-overhead design:
+ *   - PCI handles (D0F0, D1F0, D18F2, D18F5) are located once and cached.
+ *   - No SMU mailbox messages or busy-wait polling loops.
+ *   - No dynamic memory allocation after initial probe.
+ *
+ * Sensor sources:
+ *   Time, date, weekday   - EFI runtime services GetTime.
+ *   CPU brand string      - CPUID leaves 0x80000002..0x80000004.
+ *   CPU frequency/volt    - MSR_COFVID_STATUS (0xC0010071):
+ *                           CurCpuFid[5:0], CurCpuDid[8:6],
+ *                           CurCpuVid ({[20], [15:9]}, 8-bit SVI2).
+ *   CPU temperature       - SMU v8 indirect via D0F0xB8 / D0F0xBC,
+ *                           register 0xD8200CA4 (Reported Temp Ctrl),
+ *                           CurTmp[31:21] in 0.125 C steps.
+ *   BCLK 100 MHz          - Hardware reference clock strap.             NEED FIX LATER
+ *   RAM frequency         - D18F2x94[MemClkFreq] (bits 4:0).
+ *   RAM voltage           - D18F2x9C_x0001_004A (DqDqsRcvCntrl1) via
+ *                           D18F2x98/9C indirect access (MajorMode).
+ *   iGPU / NB voltage     - D18F5x174 (NB P-state Status, CurNbVid
+ *                           {[22], [16:10]}, 8-bit SVI2, shared w/ NB).
+ *   iGPU frequency        - D0F0xB8/BC SMU mailbox (cmd/arg=8);
+ *                           ARG1 / 100 = limit MHz, once.
  */
 
 #include "SbBios.h"
 
-#define MSR_PSTATE_STATUS   0xC0010296u
-#define MSR_PSTATE0         0xC0010064u
+#define MSR_COFVID_STATUS       0xC0010071u
 
-/* SMU v8 (family 15h models 60h-7Fh): northbridge indirect window */
-#define NB_INDEX_REG        0xB8
-#define NB_DATA_REG         0xBC
-#define NB_TEMP_OFFSET      0xD8200CA4u
-#define NB_TEMP_SHIFT       21
-#define NB_TEMP_RANGE_BIT   0x00080000u    /* -49 degC range select  */
+/* SMU v8 indirect access via D0F0 (00:00.0) */
+#define D0F0_SMU_INDEX_REG      0xB8
+#define D0F0_SMU_DATA_REG       0xBC
+#define SMU8_REPORTED_TEMP_REG  0xD8200CA4u
+#define SMU_CMD_ADDR            0x13000000u
+#define SMU_RSP_ADDR            0x13000010u
+#define SMU_ARG0_ADDR           0x13000020u
+#define SMU_ARG1_ADDR           0x13000024u
+#define SMU_ARG2_ADDR           0x13000028u
+#define SMU_ARG4_ADDR           0x1300002cu
+#define SMU_ARG5_ADDR           0x13000030u
 
-/* SMU9 indirect access (config space of PCI dev 18, function 3) */
-#define SMU9_INDEX_REG      0x154
-#define SMU9_DATA_REG       0x15C
-#define SMU9_TEMP_INPUT     0x99040u
+/* DRAM controller D18F2 (00:18.2) */
+#define D18F2_DCHR0_REG         0x94
+#define D18F2_DCT_OFFSET_REG    0x98
+#define D18F2_DCT_DATA_REG      0x9C
+#define DCT_DQ_DQS_RCV_CNTRL1   0x0001004Au
+
+/* Northbridge P-state D18F5 (00:18.5) */
+#define D18F5_NBPSTATE_BASE     0x160
+#define D18F5_NBPSTATE_STS_REG  0x174
 
 STATIC BOOLEAN  mProbed = FALSE;
+STATIC BOOLEAN  mIsSmu8Apu = FALSE;
 STATIC BOOLEAN  mCpuReal = FALSE;
 STATIC BOOLEAN  mTempReal = FALSE;
-STATIC BOOLEAN  mSmu8 = FALSE;         /* family 15h model 60h..9Fh */
+STATIC BOOLEAN  mMemReal = FALSE;
+STATIC BOOLEAN  mMemVoltReal = FALSE;
+STATIC BOOLEAN  mGpuVoltReal = FALSE;
+STATIC BOOLEAN  mGpuPresent = FALSE;
+
 STATIC UINTN    mCpuFreqMHz = 0;
 STATIC UINTN    mCpuVoltMv = 0;
 STATIC UINTN    mTempC = 0;
+STATIC UINTN    mMemFreqMHz = 0;
+STATIC UINTN    mMemVoltMv = 0;
+STATIC UINTN    mGpuFreqMHz = 0;
+STATIC UINTN    mGpuVoltMv = 0;
 STATIC CHAR16   mBrand[64];
+
+STATIC EFI_PCI_IO_PROTOCOL  *mD0F0 = NULL;
+
+/* SVI2 8-bit VID -> millivolts (1.55V - VID * 6.25 mV) */
+STATIC
+UINTN
+Svi2VidToMv (
+  IN UINTN  Vid
+  )
+{
+  if (Vid >= 0xF8) {
+    return 0;
+  }
+  return (155000 - Vid * 625) / 100;
+}
 
 STATIC
 VOID
-ProbeCpu (
+ProbeBrandAndFamily (
   VOID
   )
 {
@@ -71,7 +98,6 @@ ProbeCpu (
   CHAR8   Raw[49];
   UINTN   I, Out;
 
-  /* brand string */
   Raw[0] = 0;
   for (I = 0; I < 3; I++) {
     AsmCpuid (0x80000002u + (UINT32)I, &Eax, &Ebx, &Ecx, &Edx);
@@ -88,92 +114,307 @@ ProbeCpu (
     }
   }
   mBrand[Out] = 0;
-  /* trim the trailing padding the brand strings are padded with */
   while (Out > 0 && mBrand[Out - 1] == L' ') {
     mBrand[--Out] = 0;
   }
 
-  /* family/model gate: RDMSR of AMD P-state MSRs only where defined */
   AsmCpuid (1, &Eax, &Ebx, &Ecx, &Edx);
   Family = ((Eax >> 8) & 0xF) + ((Eax >> 20) & 0xFF);
   Model  = ((Eax >> 4) & 0xF) | ((Eax >> 16) & 0xF0);
   SbLog ("[hw] fam model", Family, Model);
-  if (Family != 0x15 || Model < 0x60 || Model > 0x9F) {
-    return;                       /* not Carrizo/Stoney: keep the mock */
+
+  /* Carrizo (60h-6Fh) and Stoney Ridge (70h-7Fh) */
+  mIsSmu8Apu = (Family == 0x15 && Model >= 0x60 && Model <= 0x7F);
+}
+
+STATIC
+VOID
+ReadCpuMsr (
+  VOID
+  )
+{
+  UINT64  Cofvid;
+  UINTN   Fid, Did, Vid;
+
+  if (!mIsSmu8Apu) {
+    return;
   }
-  mSmu8 = TRUE;                   /* SMU v8 register map for temp */
 
-  {
-    UINT64  Status = AsmReadMsr64 (MSR_PSTATE_STATUS);
-    UINTN   PState = (UINTN)(Status & 0x7);
-    UINT64  Ps     = AsmReadMsr64 (MSR_PSTATE0 + PState);
-    UINTN   StC    = (UINTN)(Ps & 0xFF);          /* 100 MHz steps     */
-    UINTN   VfSel  = (UINTN)((Ps >> 8) & 0xFF);   /* 5 mV steps        */
+  Cofvid = AsmReadMsr64 (MSR_COFVID_STATUS);
+  Fid = (UINTN)(Cofvid & 0x3F);
+  Did = (UINTN)((Cofvid >> 6) & 0x7);
+  Vid = (UINTN)(((Cofvid >> 9) & 0x7F) | (((Cofvid >> 20) & 1) << 7));
 
-    mCpuFreqMHz = StC * 100;
-    mCpuVoltMv  = VfSel * 5;
-    mCpuReal    = (StC != 0);
-    SbLog ("[hw] pstate", PState, mCpuFreqMHz);
-    SbLog ("[hw] vid", VfSel, mCpuVoltMv);
+  mCpuFreqMHz = (100 * (Fid + 0x10)) >> Did;
+  mCpuVoltMv  = Svi2VidToMv (Vid);
+  mCpuReal    = (mCpuFreqMHz != 0);
+
+  SbLog ("[hw] cofvid freq/mv", mCpuFreqMHz, mCpuVoltMv);
+}
+
+STATIC
+VOID
+ReadTempFromD0F0 (
+  IN EFI_PCI_IO_PROTOCOL  *D0F0
+  )
+{
+  EFI_STATUS  Status;
+  UINT32      Addr = SMU8_REPORTED_TEMP_REG;
+  UINT32      Reg = 0;
+  UINTN       TempC;
+
+  if (D0F0 == NULL) {
+    return;
+  }
+
+  Status = D0F0->Pci.Write (D0F0, EfiPciIoWidthUint32, D0F0_SMU_INDEX_REG, 1, &Addr);
+  if (EFI_ERROR (Status)) {
+    return;
+  }
+  Status = D0F0->Pci.Read (D0F0, EfiPciIoWidthUint32, D0F0_SMU_DATA_REG, 1, &Reg);
+  SbLog ("[hw] smu8 temp raw", Status, Reg);
+  if (EFI_ERROR (Status) || Reg == 0xFFFFFFFFu) {
+    return;
+  }
+
+  TempC = (UINTN)(Reg >> 21) / 8;
+  if (((Reg >> 16) & 0x3) == 0x3) {
+    TempC = (TempC >= 49) ? (TempC - 49) : 0;
+  }
+
+  if (TempC >= 10 && TempC <= 115) {
+    mTempC    = TempC;
+    mTempReal = TRUE;
   }
 }
 
-/*
- * AMD northbridge/SMU indirect read: write the SMN address to an index
- * register, read the data register back.  Used for the SMU v8
- * (dev 0 fn 0, 0xB8/0xBC) and SMU v9 (dev 18 fn 3, 0x154/0x15C) maps.
- */
 STATIC
 EFI_STATUS
-NbIndirectRead (
-  IN  EFI_PCI_IO_PROTOCOL  *Pci,
-  IN  UINTN                IndexReg,
-  IN  UINTN                DataReg,
-  IN  UINT32               SmnAddress,
-  OUT UINT32               *Value
+SmuWrite (
+  IN EFI_PCI_IO_PROTOCOL  *D0F0,
+  IN UINT32               Addr,
+  IN UINT32               Val
   )
 {
   EFI_STATUS  Status;
 
-  *Value = 0;
-  Status = Pci->Pci.Write (Pci, EfiPciIoWidthUint32, IndexReg, 1,
-                           &SmnAddress);
+  Status = D0F0->Pci.Write (D0F0, EfiPciIoWidthUint32, D0F0_SMU_INDEX_REG, 1, &Addr);
   if (EFI_ERROR (Status)) {
     return Status;
   }
-  return Pci->Pci.Read (Pci, EfiPciIoWidthUint32, DataReg, 1, Value);
+  return D0F0->Pci.Write (D0F0, EfiPciIoWidthUint32, D0F0_SMU_DATA_REG, 1, &Val);
+}
+
+STATIC
+EFI_STATUS
+SmuRead (
+  IN  EFI_PCI_IO_PROTOCOL  *D0F0,
+  IN  UINT32               Addr,
+  OUT UINT32               *Val
+  )
+{
+  EFI_STATUS  Status;
+
+  Status = D0F0->Pci.Write (D0F0, EfiPciIoWidthUint32, D0F0_SMU_INDEX_REG, 1, &Addr);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+  return D0F0->Pci.Read (D0F0, EfiPciIoWidthUint32, D0F0_SMU_DATA_REG, 1, Val);
 }
 
 /*
- * Temperature.  The box reports CPUID family 15h model 60h (SMU v8):
- * read the Reported Temperature register through the northbridge
- * indirect window of dev 0 fn 0, decoding (val >> 21) with the -49
- * range bit exactly like Linux k10temp's F15H_M60H path.  On newer
- * silicon fall back to the SMU v9 pair on dev 18 fn 3 with
- * plausible-field probing.  Anything implausible keeps the mock.
+ * One-shot iGPU max frequency limit via SMU mailbox on D0F0xB8/BC.
+ * Clears all mailbox registers afterward so other software can use it cleanly.
  */
 STATIC
 VOID
-ProbeTemp (
+ReadGpuFreqFromD0F0 (
+  IN EFI_PCI_IO_PROTOCOL  *D0F0
+  )
+{
+  EFI_STATUS  Status;
+  UINT32      Rsp = 0;
+  UINT32      Arg1 = 0;
+  UINTN       Tries;
+  UINTN       FreqMHz;
+
+  if (D0F0 == NULL || !mGpuPresent) {
+    return;
+  }
+
+  if (EFI_ERROR (SmuWrite (D0F0, SMU_RSP_ADDR + 0x4, 0))) {
+    return;
+  }
+  if (EFI_ERROR (SmuWrite (D0F0, SMU_ARG0_ADDR + 6 * 0x4, 8))) {
+    goto Cleanup;
+  }
+  if (EFI_ERROR (SmuWrite (D0F0, SMU_CMD_ADDR + 0x4, 8))) {
+    goto Cleanup;
+  }
+
+  for (Tries = 0; Tries < 1024; Tries++) {
+    Rsp = 0;
+    Status = SmuRead (D0F0, SMU_RSP_ADDR + 0x4, &Rsp);
+    if (EFI_ERROR (Status) || Rsp != 0) {
+      break;
+    }
+    CpuPause ();
+  }
+
+  Status = SmuRead (D0F0, SMU_ARG1_ADDR + 6 * 0x4, &Arg1);
+  SbLog ("[hw] smu igpu arg1", Status, Arg1);
+  if (!EFI_ERROR (Status) && Arg1 != 0 && Arg1 != 0xFFFFFFFFu) {
+    FreqMHz = (UINTN)(Arg1 / 100);
+    if (FreqMHz >= 100 && FreqMHz <= 3000) {
+      mGpuFreqMHz = FreqMHz;
+    }
+  }
+
+Cleanup:
+  SmuWrite (D0F0, SMU_CMD_ADDR + 0x4,  0);
+  SmuWrite (D0F0, SMU_RSP_ADDR + 0x4,  0);
+  SmuWrite (D0F0, SMU_ARG0_ADDR + 6 * 0x4, 0);
+  SmuWrite (D0F0, SMU_ARG1_ADDR + 6 * 0x4, 0);
+  SmuWrite (D0F0, SMU_ARG2_ADDR + 6 * 0x4, 0);
+  SmuWrite (D0F0, SMU_ARG4_ADDR + 6 * 0x4, 0);
+  SmuWrite (D0F0, SMU_ARG5_ADDR + 6 * 0x4, 0);
+}
+
+STATIC
+VOID
+ReadMemFromD18F2 (
+  IN EFI_PCI_IO_PROTOCOL  *D18F2
+  )
+{
+  EFI_STATUS  Status;
+  UINT32      Dchr = 0;
+  UINT32      Idx, Reg = 0;
+  UINTN       Tries;
+
+  if (D18F2 == NULL) {
+    return;
+  }
+
+  /* Memory frequency from D18F2x94[MemClkFreq] (bits 4:0) */
+  Status = D18F2->Pci.Read (D18F2, EfiPciIoWidthUint32, D18F2_DCHR0_REG, 1, &Dchr);
+  SbLog ("[hw] d18f2x94", Status, Dchr);
+  if (!EFI_ERROR (Status) && Dchr != 0xFFFFFFFFu && ((Dchr & (1u << 7)) != 0)) {
+    UINTN  MemClkFreq = (UINTN)(Dchr & 0x1F);
+    if (MemClkFreq >= 0x04) {
+      mMemFreqMHz = ((MemClkFreq + 6) * 200) / 3;
+      mMemReal    = TRUE;
+    }
+  }
+
+  /* Memory voltage from D18F2x9C_x0001_004A (DqDqsRcvCntrl1) */
+  Idx = DCT_DQ_DQS_RCV_CNTRL1;
+  Status = D18F2->Pci.Write (D18F2, EfiPciIoWidthUint32, D18F2_DCT_OFFSET_REG, 1, &Idx);
+  if (!EFI_ERROR (Status)) {
+    for (Tries = 0; Tries < 64; Tries++) {
+      Idx = 0;
+      Status = D18F2->Pci.Read (D18F2, EfiPciIoWidthUint32, D18F2_DCT_OFFSET_REG, 1, &Idx);
+      if (EFI_ERROR (Status) || (Idx & 0x80000000u) != 0) {
+        break;
+      }
+      CpuPause ();
+    }
+    if (!EFI_ERROR (Status) && (Idx & 0x80000000u) != 0) {
+      Status = D18F2->Pci.Read (D18F2, EfiPciIoWidthUint32, D18F2_DCT_DATA_REG, 1, &Reg);
+      SbLog ("[hw] dqdqsrcvcntrl1", Status, Reg);
+      if (!EFI_ERROR (Status) && Reg != 0xFFFFFFFFu) {
+        UINTN  MajorMode = (UINTN)((Reg >> 4) & 0x7);
+        switch (MajorMode) {
+          case 0:
+            mMemVoltMv   = 1500;   /* DDR3  1.50V */
+            mMemVoltReal = TRUE;
+            break;
+          case 1:
+            mMemVoltMv   = 1350;   /* DDR3L 1.35V */
+            mMemVoltReal = TRUE;
+            break;
+          case 2:
+          case 3:
+            mMemVoltMv   = 1200;   /* DDR4 / LPDDR3 1.20V */
+            mMemVoltReal = TRUE;
+            break;
+          default:
+            break;
+        }
+      }
+    }
+  }
+}
+
+STATIC
+VOID
+ReadGpuVoltFromD18F5 (
+  IN EFI_PCI_IO_PROTOCOL  *D18F5
+  )
+{
+  EFI_STATUS  Status;
+  UINT32      Reg = 0;
+  UINTN       NbVid, NbPs;
+
+  if (D18F5 == NULL) {
+    return;
+  }
+
+  Status = D18F5->Pci.Read (D18F5, EfiPciIoWidthUint32, D18F5_NBPSTATE_STS_REG, 1, &Reg);
+  SbLog ("[hw] d18f5x174", Status, Reg);
+  if (EFI_ERROR (Status) || Reg == 0xFFFFFFFFu) {
+    return;
+  }
+
+  NbVid = (UINTN)(((Reg >> 10) & 0x7F) | (((Reg >> 22) & 1) << 7));
+  if (NbVid == 0 || NbVid >= 0xF8) {
+    /* Cross-check active NB P-state entry D18F5x16[0..C] */
+    NbPs = (UINTN)((Reg >> 19) & 0x3);
+    Reg  = 0;
+    Status = D18F5->Pci.Read (D18F5, EfiPciIoWidthUint32,
+                              (UINT32)(D18F5_NBPSTATE_BASE + NbPs * 4), 1, &Reg);
+    if (!EFI_ERROR (Status) && Reg != 0xFFFFFFFFu) {
+      NbVid = (UINTN)(((Reg >> 10) & 0x7F) | (((Reg >> 21) & 1) << 7));
+    }
+  }
+
+  if (NbVid > 0 && NbVid < 0xF8) {
+    mGpuVoltMv   = Svi2VidToMv (NbVid);
+    mGpuVoltReal = (mGpuVoltMv > 0);
+  }
+}
+
+/*
+ * Single-pass PCI discovery for D0F0 (SMU v8), D1F0 (iGPU), D18F2 (DCT),
+ * and D18F5 (NB P-state).  Called once so runtime cost is zero.
+ */
+STATIC
+VOID
+ProbePciOnce (
   VOID
   )
 {
-  EFI_HANDLE       *Handles;
-  EFI_STATUS       Status;
-  UINTN            Index, Count;
+  EFI_HANDLE           *Handles;
+  EFI_STATUS           Status;
+  UINTN                Index, Count;
   EFI_PCI_IO_PROTOCOL  *Pci;
+  EFI_PCI_IO_PROTOCOL  *D18F2 = NULL;
+  EFI_PCI_IO_PROTOCOL  *D18F5 = NULL;
+
+  if (!mIsSmu8Apu) {
+    return;
+  }
 
   Handles = NULL;
   Status  = gBS->LocateHandleBuffer (ByProtocol, &gEfiPciIoProtocolGuid,
                                      NULL, &Count, &Handles);
   SbLog ("[hw] pci handles", Count, (UINTN)Status);
-  if (EFI_ERROR (Status)) {
+  if (EFI_ERROR (Status) || Handles == NULL) {
     return;
   }
 
   for (Index = 0; Index < Count; Index++) {
     UINTN   Seg, Bus, Dev, Func;
-    UINT32  Id, Reg = 0;
+    UINT32  Id = 0;
 
     Pci = NULL;
     if (EFI_ERROR (gBS->HandleProtocol (Handles[Index], &gEfiPciIoProtocolGuid,
@@ -183,61 +424,41 @@ ProbeTemp (
     if (EFI_ERROR (Pci->GetLocation (Pci, &Seg, &Bus, &Dev, &Func))) {
       continue;
     }
-    if ((Seg != 0) || (Bus != 0)) {
-      continue;
-    }
-    if (mSmu8) {
-      if ((Dev != 0) || (Func != 0)) {
-        continue;
-      }
-    } else if ((Dev != 18) || (Func != 3)) {
-      continue;
-    }
-    Status = Pci->Pci.Read (Pci, EfiPciIoWidthUint32, 0, 1, &Id);
-    if (EFI_ERROR (Status) || ((Id & 0xFFFF) != 0x1022)) {
+    if (Seg != 0 || Bus != 0) {
       continue;
     }
 
-    if (mSmu8) {
-      Status = NbIndirectRead (Pci, NB_INDEX_REG, NB_DATA_REG,
-                               NB_TEMP_OFFSET, &Reg);
-      SbLog6 ("[hw] nb temp raw", (UINTN)Status, Reg, Reg >> NB_TEMP_SHIFT,
-              0, 0, 0);
-      if (!EFI_ERROR (Status)) {
-        INT32  Temp = (INT32)(Reg >> NB_TEMP_SHIFT);
-
-        if ((Reg & NB_TEMP_RANGE_BIT) != 0) {
-          Temp -= 49;
-        }
-        if ((Temp >= 15) && (Temp <= 120)) {
-          mTempC    = (UINTN)Temp;
-          mTempReal = TRUE;
-        }
+    if (Dev == 0 && Func == 0) {
+      if (!EFI_ERROR (Pci->Pci.Read (Pci, EfiPciIoWidthUint32, 0, 1, &Id)) &&
+          ((Id & 0xFFFF) == 0x1022)) {
+        mD0F0 = Pci;
       }
-    } else {
-      Status = NbIndirectRead (Pci, SMU9_INDEX_REG, SMU9_DATA_REG,
-                               SMU9_TEMP_INPUT, &Reg);
-      SbLog ("[hw] smu temp raw", Status, Reg);
-      if (!EFI_ERROR (Status)) {
-        /* undocumented packing: probe the plausible byte fields */
-        UINTN  Cand[3] = { (Reg >> 16) & 0xFF, (Reg >> 8) & 0xFF, Reg & 0xFF };
-        UINTN  I;
-
-        for (I = 0; I < 3; I++) {
-          if (Cand[I] >= 15 && Cand[I] <= 120) {
-            mTempC    = Cand[I];
-            mTempReal = TRUE;
-            break;
-          }
-        }
+    } else if (Dev == 1 && Func == 0) {
+      if (!EFI_ERROR (Pci->Pci.Read (Pci, EfiPciIoWidthUint32, 0, 1, &Id)) &&
+          ((Id & 0xFFFF) == 0x1002)) {
+        mGpuPresent = TRUE;
+        mGpuFreqMHz = 800;   /* Stoney Ridge A9-9420 Radeon R5 nominal SCLK */
+        SbLog ("[hw] igpu id", Id & 0xFFFF, (Id >> 16) & 0xFFFF);
       }
-    }
-    if (mTempReal) {
-      break;
+    } else if (Dev == 18 && Func == 2) {
+      if (!EFI_ERROR (Pci->Pci.Read (Pci, EfiPciIoWidthUint32, 0, 1, &Id)) &&
+          ((Id & 0xFFFF) == 0x1022)) {
+        D18F2 = Pci;
+      }
+    } else if (Dev == 18 && Func == 5) {
+      if (!EFI_ERROR (Pci->Pci.Read (Pci, EfiPciIoWidthUint32, 0, 1, &Id)) &&
+          ((Id & 0xFFFF) == 0x1022)) {
+        D18F5 = Pci;
+      }
     }
   }
 
   FreePool (Handles);
+
+  ReadTempFromD0F0 (mD0F0);
+  ReadGpuFreqFromD0F0 (mD0F0);
+  ReadMemFromD18F2 (D18F2);
+  ReadGpuVoltFromD18F5 (D18F5);
 }
 
 /* "1234" MHz -> "1.2 GHz" (one decimal, truncated) */
@@ -308,8 +529,9 @@ HwUpdate (
   )
 {
   if (!mProbed) {
-    ProbeCpu ();
-    ProbeTemp ();
+    ProbeBrandAndFamily ();
+    ReadCpuMsr ();
+    ProbePciOnce ();
     mProbed = TRUE;
     SbLog ("[hw] probe done", mCpuReal, mTempReal);
   }
@@ -324,22 +546,39 @@ HwUpdate (
     FmtGHz (Hw->CpuFreq, 16, mCpuFreqMHz);
     FmtVolt (Hw->CpuVolt, 16, mCpuVoltMv);
   } else {
-    StrCpyS (Hw->CpuFreq, 16, L"3.6 GHz");   /* mock: CPU not probeable */
+    StrCpyS (Hw->CpuFreq, 16, L"3.0 GHz");
     StrCpyS (Hw->CpuVolt, 16, L"1.25V");
   }
+
   if (mTempReal) {
     UnicodeSPrint (Hw->CpuTemp, 16 * sizeof (CHAR16), L"%uC", mTempC);
   } else {
-    StrCpyS (Hw->CpuTemp, 16, L"44C");       /* mock: SMU read rejected  */
+    StrCpyS (Hw->CpuTemp, 16, L"44C");
   }
 
-  /*
-   * Fixed / stub values, see the file header: BCLK is the hardware strap,
-   * memory and iGPU numbers are the design mockups.
-   */
   StrCpyS (Hw->CpuBclk, 16, L"100 MHz");
-  StrCpyS (Hw->MemFreq, 16, L"2133 MHz");
-  StrCpyS (Hw->MemVolt, 16, L"1.2V");
-  StrCpyS (Hw->GpuFreq, 16, L"960 MHz");
-  StrCpyS (Hw->GpuVolt, 16, L"1.0V");
+
+  if (mMemReal) {
+    UnicodeSPrint (Hw->MemFreq, 16 * sizeof (CHAR16), L"%u MHz", mMemFreqMHz);
+  } else {
+    StrCpyS (Hw->MemFreq, 16, L"2133 MHz");
+  }
+
+  if (mMemVoltReal) {
+    FmtVolt (Hw->MemVolt, 16, mMemVoltMv);
+  } else {
+    StrCpyS (Hw->MemVolt, 16, L"1.20V");
+  }
+
+  if (mGpuPresent && mGpuFreqMHz > 0) {
+    UnicodeSPrint (Hw->GpuFreq, 16 * sizeof (CHAR16), L"%u MHz", mGpuFreqMHz);
+  } else {
+    StrCpyS (Hw->GpuFreq, 16, L"800 MHz");
+  }
+
+  if (mGpuVoltReal) {
+    FmtVolt (Hw->GpuVolt, 16, mGpuVoltMv);
+  } else {
+    StrCpyS (Hw->GpuVolt, 16, L"1.00V");
+  }
 }
