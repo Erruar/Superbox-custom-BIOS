@@ -11,8 +11,8 @@
 
 #define FRAME_STALL_US  8000
 
-/* one idle lap stalls 8 ms plus poll overhead (~10 ms); 300 laps ~= 3 s */
-#define SENSOR_TICK_LAPS  300u
+/* one idle lap stalls 8 ms plus poll overhead (~10 ms); 100 laps ~= 2 s */
+#define SENSOR_TICK_LAPS  100u
 
 #define SCR_BOOT   0
 #define SCR_SETUP  1

@@ -6,7 +6,10 @@
  *
  * Zero-overhead design:
  *   - PCI handles (D0F0, D1F0, D18F2, D18F5) are located once and cached.
- *   - No SMU mailbox messages or busy-wait polling loops.
+ *   - CPU frequency/voltage (MSR) and temperature (SMU indirect) are
+ *     re-read live on every dashboard tick; everything static (memory,
+ *     iGPU) is read once at probe.
+ *   - The iGPU mailbox command is the only polling loop and runs once.
  *   - No dynamic memory allocation after initial probe.
  *
  * Sensor sources:
@@ -135,6 +138,7 @@ ReadCpuMsr (
 {
   UINT64  Cofvid;
   UINTN   Fid, Did, Vid;
+  STATIC UINTN  LogLeft = 3;
 
   if (!mIsSmu8Apu) {
     return;
@@ -149,7 +153,9 @@ ReadCpuMsr (
   mCpuVoltMv  = Svi2VidToMv (Vid);
   mCpuReal    = (mCpuFreqMHz != 0);
 
-  SbLog ("[hw] cofvid freq/mv", mCpuFreqMHz, mCpuVoltMv);
+  if (LogLeft-- > 0) {
+    SbLog ("[hw] cofvid freq/mv", mCpuFreqMHz, mCpuVoltMv);
+  }
 }
 
 STATIC
@@ -162,6 +168,7 @@ ReadTempFromD0F0 (
   UINT32      Addr = SMU8_REPORTED_TEMP_REG;
   UINT32      Reg = 0;
   UINTN       TempC;
+  STATIC UINTN  LogLeft = 3;   /* the raw read is polled every tick: log thrice */
 
   if (D0F0 == NULL) {
     return;
@@ -172,7 +179,9 @@ ReadTempFromD0F0 (
     return;
   }
   Status = D0F0->Pci.Read (D0F0, EfiPciIoWidthUint32, D0F0_SMU_DATA_REG, 1, &Reg);
-  SbLog ("[hw] smu8 temp raw", Status, Reg);
+  if (LogLeft-- > 0) {
+    SbLog ("[hw] smu8 temp raw", Status, Reg);
+  }
   if (EFI_ERROR (Status) || Reg == 0xFFFFFFFFu) {
     return;
   }
@@ -455,7 +464,7 @@ ProbePciOnce (
 
   FreePool (Handles);
 
-  ReadTempFromD0F0 (mD0F0);
+  /* one-shot reads: the iGPU SCLK limit does not change at runtime */
   ReadGpuFreqFromD0F0 (mD0F0);
   ReadMemFromD18F2 (D18F2);
   ReadGpuVoltFromD18F5 (D18F5);
@@ -530,11 +539,14 @@ HwUpdate (
 {
   if (!mProbed) {
     ProbeBrandAndFamily ();
-    ReadCpuMsr ();
     ProbePciOnce ();
     mProbed = TRUE;
     SbLog ("[hw] probe done", mCpuReal, mTempReal);
   }
+
+  /* live sensors: re-read every tick (MSR read + two PCI config accesses) */
+  ReadCpuMsr ();
+  ReadTempFromD0F0 (mD0F0);
 
   ZeroMem (Hw, sizeof (*Hw));
   ClockToText (Hw->Time, Hw->Date, Hw->Weekday);

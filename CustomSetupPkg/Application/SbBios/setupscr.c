@@ -1240,7 +1240,19 @@ SetupTick (
   }
   HwUpdate (&mHw);
   mHwMinute = (UINTN)mHw.Time[0] * 100 + mHw.Time[1];
-  GfxFill (0, 0, CONTENT_X (), (INT32)GfxHeight (), COL_BG);
+  /*
+   * Repaint the dashboard column only.  The fill boundary must not cross
+   * any ink: the right content box's left corner arms span
+   * CONTENT_X-10*Sc .. CONTENT_X+6*Sc, so anything reaching past
+   * CONTENT_X-16*Sc clips them into bare dashes for one tick.  Stop at
+   * CONTENT_X-40*Sc, ~30px clear of the left boxes' own corner tips
+   * (CONTENT_X-14*Sc, redrawn identically by DrawLeft, wobble is seeded
+   * and ends are pinned to the nominal line).
+   */
+  {
+    INT32  Sc = S ();
+    GfxFill (0, 0, CONTENT_X () - (INT32)(40 * Sc), (INT32)GfxHeight (), COL_BG);
+  }
   DrawLeft ();
 }
 
