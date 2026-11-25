@@ -11,18 +11,19 @@
  *                           (core frequency in 100 MHz steps) and VfSel
  *                           (voltage in 5 mV steps), the same decoding the
  *                           Linux amd-pstate legacy driver uses.  Read
- *                           only on AMD family 15h model 90h..9Fh (Stoney,
- *                           the box's A9-9420); RDMSR of an unsupported
- *                           MSR raises #GP, so the gate is strict.      REAL
- *   CPU temperature       - SMU9 mailbox over PCI config space of
- *                           device 18 function 3 (index 0x154, data
- *                           0x15C, temperature register 0x99040), mirroring
- *                           Linux k10temp for Family 15h models 60h-6Fh
- *                           (Carrizo) / 90h-9Fh (Stoney).  The raw register
- *                           layout is not documented by AMD; we read it,
- *                           accept the value only if it is a plausible
- *                           temperature, and fall back to the mock.
- *                                                                    BEST EFFORT
+ *                           only on AMD family 15h model 60h..9Fh (the
+ *                           box's A9-9420 reports 15h/60h); RDMSR of an
+ *                           unsupported MSR raises #GP, so the gate is
+ *                           strict.                                       REAL
+ *   CPU temperature       - SMU v8 path (this box): the northbridge
+ *                           indirect pair of PCI dev 0 fn 0 (index 0xB8,
+ *                           data 0xBC) reading SMN 0xD8200CA4, decoded as
+ *                           (val >> 21) with the -49 range bit 19, exactly
+ *                           like Linux k10temp for family 15h models
+ *                           60h-7Fh.  SMU v9+ path: PCI dev 18 fn 3
+ *                           (index 0x154, data 0x15C, register 0x99040)
+ *                           with plausible-field probing.  Implausible
+ *                           readings keep the mock.                    BEST EFFORT
  *   BCLK 100 MHz          - the Stoney clock-generator strap is fixed at
  *                           100 MHz by hardware; nothing readable.      FIXED
  *   Memory freq/volt,     - trained by the PSP/SMU firmware and only
@@ -38,6 +39,13 @@
 #define MSR_PSTATE_STATUS   0xC0010296u
 #define MSR_PSTATE0         0xC0010064u
 
+/* SMU v8 (family 15h models 60h-7Fh): northbridge indirect window */
+#define NB_INDEX_REG        0xB8
+#define NB_DATA_REG         0xBC
+#define NB_TEMP_OFFSET      0xD8200CA4u
+#define NB_TEMP_SHIFT       21
+#define NB_TEMP_RANGE_BIT   0x00080000u    /* -49 degC range select  */
+
 /* SMU9 indirect access (config space of PCI dev 18, function 3) */
 #define SMU9_INDEX_REG      0x154
 #define SMU9_DATA_REG       0x15C
@@ -46,6 +54,7 @@
 STATIC BOOLEAN  mProbed = FALSE;
 STATIC BOOLEAN  mCpuReal = FALSE;
 STATIC BOOLEAN  mTempReal = FALSE;
+STATIC BOOLEAN  mSmu8 = FALSE;         /* family 15h model 60h..9Fh */
 STATIC UINTN    mCpuFreqMHz = 0;
 STATIC UINTN    mCpuVoltMv = 0;
 STATIC UINTN    mTempC = 0;
@@ -89,9 +98,10 @@ ProbeCpu (
   Family = ((Eax >> 8) & 0xF) + ((Eax >> 20) & 0xFF);
   Model  = ((Eax >> 4) & 0xF) | ((Eax >> 16) & 0xF0);
   SbLog ("[hw] fam model", Family, Model);
-  if (Family != 0x15 || Model < 0x90 || Model > 0x9F) {
-    return;                       /* not Stoney: keep the mock values */
+  if (Family != 0x15 || Model < 0x60 || Model > 0x9F) {
+    return;                       /* not Carrizo/Stoney: keep the mock */
   }
+  mSmu8 = TRUE;                   /* SMU v8 register map for temp */
 
   {
     UINT64  Status = AsmReadMsr64 (MSR_PSTATE_STATUS);
@@ -109,9 +119,38 @@ ProbeCpu (
 }
 
 /*
- * SMU9 temperature: locate the AMD "Data Fabric / SMU" function
- * (bus 0, dev 18, fn 3, vendor 0x1022) through EFI_PCI_IO_PROTOCOL and run
- * the indirect index/data pair.  Any implausible reading keeps the stub.
+ * AMD northbridge/SMU indirect read: write the SMN address to an index
+ * register, read the data register back.  Used for the SMU v8
+ * (dev 0 fn 0, 0xB8/0xBC) and SMU v9 (dev 18 fn 3, 0x154/0x15C) maps.
+ */
+STATIC
+EFI_STATUS
+NbIndirectRead (
+  IN  EFI_PCI_IO_PROTOCOL  *Pci,
+  IN  UINTN                IndexReg,
+  IN  UINTN                DataReg,
+  IN  UINT32               SmnAddress,
+  OUT UINT32               *Value
+  )
+{
+  EFI_STATUS  Status;
+
+  *Value = 0;
+  Status = Pci->Pci.Write (Pci, EfiPciIoWidthUint32, IndexReg, 1,
+                           &SmnAddress);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+  return Pci->Pci.Read (Pci, EfiPciIoWidthUint32, DataReg, 1, Value);
+}
+
+/*
+ * Temperature.  The box reports CPUID family 15h model 60h (SMU v8):
+ * read the Reported Temperature register through the northbridge
+ * indirect window of dev 0 fn 0, decoding (val >> 21) with the -49
+ * range bit exactly like Linux k10temp's F15H_M60H path.  On newer
+ * silicon fall back to the SMU v9 pair on dev 18 fn 3 with
+ * plausible-field probing.  Anything implausible keeps the mock.
  */
 STATIC
 VOID
@@ -144,40 +183,58 @@ ProbeTemp (
     if (EFI_ERROR (Pci->GetLocation (Pci, &Seg, &Bus, &Dev, &Func))) {
       continue;
     }
-    if ((Seg != 0) || (Bus != 0) || (Dev != 18) || (Func != 3)) {
+    if ((Seg != 0) || (Bus != 0)) {
+      continue;
+    }
+    if (mSmu8) {
+      if ((Dev != 0) || (Func != 0)) {
+        continue;
+      }
+    } else if ((Dev != 18) || (Func != 3)) {
       continue;
     }
     Status = Pci->Pci.Read (Pci, EfiPciIoWidthUint32, 0, 1, &Id);
     if (EFI_ERROR (Status) || ((Id & 0xFFFF) != 0x1022)) {
-      break;
+      continue;
     }
 
-    {
-      UINT32  Addr = SMU9_TEMP_INPUT;
+    if (mSmu8) {
+      Status = NbIndirectRead (Pci, NB_INDEX_REG, NB_DATA_REG,
+                               NB_TEMP_OFFSET, &Reg);
+      SbLog6 ("[hw] nb temp raw", (UINTN)Status, Reg, Reg >> NB_TEMP_SHIFT,
+              0, 0, 0);
+      if (!EFI_ERROR (Status)) {
+        INT32  Temp = (INT32)(Reg >> NB_TEMP_SHIFT);
 
-      Status = Pci->Pci.Write (Pci, EfiPciIoWidthUint32, SMU9_INDEX_REG,
-                               1, &Addr);
-    }
-    if (!EFI_ERROR (Status)) {
-      Reg  = 0;
-      Status = Pci->Pci.Read (Pci, EfiPciIoWidthUint32, SMU9_DATA_REG,
-                              1, &Reg);
-    }
-    SbLog ("[hw] smu temp raw", Status, Reg);
-    if (!EFI_ERROR (Status)) {
-      /* undocumented packing: probe the plausible byte fields */
-      UINTN  Cand[3] = { (Reg >> 16) & 0xFF, (Reg >> 8) & 0xFF, Reg & 0xFF };
-      UINTN  I;
-
-      for (I = 0; I < 3; I++) {
-        if (Cand[I] >= 15 && Cand[I] <= 120) {
-          mTempC    = Cand[I];
+        if ((Reg & NB_TEMP_RANGE_BIT) != 0) {
+          Temp -= 49;
+        }
+        if ((Temp >= 15) && (Temp <= 120)) {
+          mTempC    = (UINTN)Temp;
           mTempReal = TRUE;
-          break;
+        }
+      }
+    } else {
+      Status = NbIndirectRead (Pci, SMU9_INDEX_REG, SMU9_DATA_REG,
+                               SMU9_TEMP_INPUT, &Reg);
+      SbLog ("[hw] smu temp raw", Status, Reg);
+      if (!EFI_ERROR (Status)) {
+        /* undocumented packing: probe the plausible byte fields */
+        UINTN  Cand[3] = { (Reg >> 16) & 0xFF, (Reg >> 8) & 0xFF, Reg & 0xFF };
+        UINTN  I;
+
+        for (I = 0; I < 3; I++) {
+          if (Cand[I] >= 15 && Cand[I] <= 120) {
+            mTempC    = Cand[I];
+            mTempReal = TRUE;
+            break;
+          }
         }
       }
     }
-    break;
+    if (mTempReal) {
+      break;
+    }
   }
 
   FreePool (Handles);
