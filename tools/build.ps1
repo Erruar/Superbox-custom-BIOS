@@ -46,20 +46,20 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-$Out = Get-ChildItem "$Workspace\Build" -Recurse -Filter 'H2oSetup.efi' -EA SilentlyContinue |
+$Out = Get-ChildItem "$Workspace\Build" -Recurse -Filter 'SbBios.efi' -EA SilentlyContinue |
        Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($Out) {
     New-Item -ItemType Directory -Force -Path "$Repo\build" | Out-Null
-    Copy-Item $Out.FullName "$Repo\build\H2oSetup.efi" -Force
-    $Size = (Get-Item "$Repo\build\H2oSetup.efi").Length
-    Write-Host "[build] OK: build\H2oSetup.efi ($Size bytes)"
+    Copy-Item $Out.FullName "$Repo\build\SbBios.efi" -Force
+    $Size = (Get-Item "$Repo\build\SbBios.efi").Length
+    Write-Host "[build] OK: build\SbBios.efi ($Size bytes)"
 } else {
-    Write-Host '[build] no H2oSetup.efi produced - see the build log above'
+    Write-Host '[build] no SbBios.efi produced - see the build log above'
     exit 1
 }
 
 # QEMU helper drivers (the stock OVMF image has no USB mouse support)
-foreach ($name in 'UsbMouseDxe.efi', 'UsbMouseAbsolutePointerDxe.efi', 'SbPointerInfo.efi', 'VirtioInputDxe.efi', 'SbBoot.efi') {
+foreach ($name in 'UsbMouseDxe.efi', 'UsbMouseAbsolutePointerDxe.efi', 'SbPointerInfo.efi', 'VirtioInputDxe.efi') {
     $Drv = Get-ChildItem "$Workspace\Build" -Recurse -Filter $name -EA SilentlyContinue |
            Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($Drv) {

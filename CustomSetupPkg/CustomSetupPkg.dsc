@@ -45,9 +45,8 @@
   gEfiMdePkgTokenSpaceGuid.PcdDebugPrintErrorLevel|0x8FFFFFFF
 
 [Components]
-  CustomSetupPkg/Application/H2oSetup/H2oSetup.inf
   CustomSetupPkg/Application/SbPointerInfo/SbPointerInfo.inf
-  CustomSetupPkg/Application/SbBoot/SbBoot.inf
+  CustomSetupPkg/Application/SbBios/SbBios.inf
 
   #
   # Stock pointer drivers, not part of the QEMU OVMF image.  They are built
