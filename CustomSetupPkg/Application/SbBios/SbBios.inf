@@ -1,0 +1,52 @@
+[Defines]
+  INF_VERSION    = 0x0001001B
+  BASE_NAME      = SbBios
+  FILE_GUID      = 4a7c2e91-6f05-4d18-b3ea-8c92f04d715d
+  MODULE_TYPE    = UEFI_APPLICATION
+  VERSION_STRING = 0.2
+  ENTRY_POINT    = SbBiosMain
+
+[Sources]
+  SbBios.h
+  fontdata.h
+  main.c
+  gfx.c
+  input.c
+  log.c
+  model.c
+  hwinfo.c
+  bootscr.c
+  setupscr.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  UefiLib
+  BaseLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  PrintLib
+  DevicePathLib
+  DebugLib
+  SerialPortLib
+
+[Guids]
+  gEfiFileInfoGuid                          ## CONSUMES ## GUID
+  gEfiGlobalVariableGuid                    ## CONSUMES ## GUID
+
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid            ## CONSUMES
+  gEfiHiiDatabaseProtocolGuid               ## CONSUMES
+  gEfiHiiStringProtocolGuid                 ## CONSUMES
+  gEfiHiiConfigRoutingProtocolGuid          ## CONSUMES
+  gEfiSimplePointerProtocolGuid             ## CONSUMES
+  gEfiAbsolutePointerProtocolGuid           ## CONSUMES
+  gEfiSimpleTextInProtocolGuid              ## CONSUMES
+  gEfiDevicePathProtocolGuid                ## CONSUMES
+  gEfiSimpleFileSystemProtocolGuid          ## CONSUMES
+  gEfiPciIoProtocolGuid                     ## CONSUMES

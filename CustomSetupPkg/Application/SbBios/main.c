@@ -1,0 +1,82 @@
+/*
+ * main.c - SbBios entry point and screen router.
+ *
+ * One application, two screens: the boot menu and the setup viewer.  The
+ * transition between them is a state change - the boot menu used to
+ * LoadImage the setup from the USB stick, which cost 10 seconds on the
+ * box's firmware; in-process it costs one model scan (once) and a redraw.
+ */
+
+#include "SbBios.h"
+
+#define FRAME_STALL_US  8000
+
+#define SCR_BOOT   0
+#define SCR_SETUP  1
+
+EFI_STATUS
+EFIAPI
+SbBiosMain (
+  IN EFI_HANDLE        ImageHandle,
+  IN EFI_SYSTEM_TABLE  *SystemTable
+  )
+{
+  EFI_STATUS    Status;
+  INPUT_EVENT   Event;
+  INT32         Screen = SCR_BOOT;
+  INT32         CursorX, CursorY;
+
+  SbLogInit ();
+  SbLog ("[sbios] enter", 0, 0);
+
+  Status = GfxInit ();
+  if (EFI_ERROR (Status)) {
+    Print (L"SbBios: no usable graphics output (%r)\n", Status);
+    return Status;
+  }
+
+  InputInit ();
+  BootEnter ();
+  InputGetCursor (&CursorX, &CursorY);
+  GfxSetCursor (CursorX, CursorY, TRUE);
+  GfxPresent ();
+
+  for ( ; ;) {
+    UINT32  Type = InputPoll (&Event);
+
+    if (Type == EV_NONE) {
+      gBS->Stall (FRAME_STALL_US);
+      continue;
+    }
+
+    if (Type == EV_MOVE) {
+      /* cursor-only update: cheap present, no full redraw */
+      InputGetCursor (&CursorX, &CursorY);
+      GfxSetCursor (CursorX, CursorY, TRUE);
+      GfxPresent ();
+      continue;
+    }
+
+    if (Screen == SCR_BOOT) {
+      BootEvent (&Event);
+      if (BootWantSetup ()) {
+        Screen = SCR_SETUP;
+        SetupEnter ();
+      } else {
+        BootDraw ();
+      }
+    } else {
+      SetupEvent (&Event);
+      if (SetupWantBoot ()) {
+        Screen = SCR_BOOT;
+        BootEnter ();
+      } else {
+        SetupDraw ();
+      }
+    }
+
+    InputGetCursor (&CursorX, &CursorY);
+    GfxSetCursor (CursorX, CursorY, TRUE);
+    GfxPresent ();
+  }
+}
