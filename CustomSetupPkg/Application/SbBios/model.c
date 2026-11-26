@@ -56,8 +56,20 @@ EFI_STATUS
   OUT UINTN      *ActionRequest
   );
 
+typedef
+EFI_STATUS
+(EFIAPI *SB_BROWSER_CALLBACK) (
+  IN CONST VOID      *This,
+  IN OUT UINTN       *ResultsDataSize,
+  IN OUT EFI_STRING  ResultsData,
+  IN BOOLEAN         RetrieveData,
+  IN CONST EFI_GUID  *VariableGuid,
+  IN CONST CHAR16    *VariableName
+  );
+
 typedef struct {
-  SB_SEND_FORM  SendForm;
+  SB_SEND_FORM         SendForm;
+  SB_BROWSER_CALLBACK  BrowserCallback;
 } SB_FORM_BROWSER2;
 
 STATIC EFI_HANDLE       mSetupAppHandle = NULL;
@@ -65,6 +77,7 @@ STATIC UINT32          *mSetupAppPhase  = NULL;
 STATIC EFI_RAISE_TPL    mOrigRaiseTpl   = NULL;
 STATIC SB_SETUP_RUNNER  mActiveRunner   = NULL;
 STATIC BOOLEAN          mRunnerRan      = FALSE;
+STATIC VARSTORE        *mActiveFlushVar = NULL;
 
 STATIC
 EFI_TPL
@@ -120,6 +133,76 @@ HookSendForm (
   if (ActionRequest != NULL) {
     *ActionRequest = WantBoot ? 3 : 1; /* 3 = EXIT, 1 = RESET */
   }
+  return EFI_SUCCESS;
+}
+
+STATIC
+EFI_STATUS
+EFIAPI
+HookBrowserCallback (
+  IN CONST VOID      *This,
+  IN OUT UINTN       *ResultsDataSize,
+  IN OUT EFI_STRING  ResultsData,
+  IN BOOLEAN         RetrieveData,
+  IN CONST EFI_GUID  *VariableGuid,
+  IN CONST CHAR16    *VariableName
+  )
+{
+  VARSTORE    *V = mActiveFlushVar;
+  EFI_STRING  CfgResp = NULL;
+  EFI_STRING  Prog    = NULL;
+  CHAR16      *OffPtr;
+  UINTN       NeedBytes;
+  EFI_STATUS  Status;
+
+  (VOID)This;
+  (VOID)VariableGuid;
+  (VOID)VariableName;
+
+  if (!RetrieveData) {
+    return EFI_SUCCESS;
+  }
+  if (ResultsDataSize == NULL) {
+    return EFI_INVALID_PARAMETER;
+  }
+  if ((V == NULL) || (V->Data == NULL) || (mCfg == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  Status = mCfg->BlockToConfig (
+                   mCfg,
+                   L"GUID=00000000000000000000000000000000&NAME=0000&PATH=00",
+                   V->Data,
+                   V->DataSize,
+                   &CfgResp,
+                   &Prog
+                   );
+  if (EFI_ERROR (Status) || (CfgResp == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  OffPtr = CfgResp;
+  while (*OffPtr != 0) {
+    if (StrnCmp (OffPtr, L"OFFSET=", 7) == 0) {
+      break;
+    }
+    OffPtr++;
+  }
+  if (*OffPtr == 0) {
+    FreePool (CfgResp);
+    return EFI_NOT_FOUND;
+  }
+
+  NeedBytes = (StrLen (OffPtr) + 1) * sizeof (CHAR16);
+  if ((*ResultsDataSize < NeedBytes) || (ResultsData == NULL)) {
+    *ResultsDataSize = NeedBytes;
+    FreePool (CfgResp);
+    return EFI_BUFFER_TOO_SMALL;
+  }
+
+  CopyMem (ResultsData, OffPtr, NeedBytes);
+  *ResultsDataSize = NeedBytes;
+  FreePool (CfgResp);
   return EFI_SUCCESS;
 }
 
@@ -513,7 +596,10 @@ ModelFlush (
 
       Status = mCfg->BlockToConfig (mCfg, Hdr, V->Data, V->DataSize, &ConfigResp, &Progress);
       if (!EFI_ERROR (Status) && (ConfigResp != NULL)) {
+        mActiveFlushVar = V;
         Status = Ca->RouteConfig (Ca, ConfigResp, &Progress);
+        mActiveFlushVar = NULL;
+        SbLog ("[model] route", (UINTN)Status, 0);
         FreePool (ConfigResp);
       }
     }
@@ -1373,6 +1459,7 @@ ModelRunSetup (
   VOID                   *Existing     = NULL;
   SB_FORM_BROWSER2       *Fb2          = NULL;
   SB_SEND_FORM           OrigSendForm  = NULL;
+  SB_BROWSER_CALLBACK    OrigCallback  = NULL;
   EFI_TEXT_CLEAR_SCREEN  OrigClear     = NULL;
   EFI_STATUS             Status;
 
@@ -1398,8 +1485,10 @@ ModelRunSetup (
 
   if (!EFI_ERROR (gBS->LocateProtocol (&mFormBrowser2Guid, NULL, (VOID **)&Fb2)) &&
       (Fb2 != NULL)) {
-    OrigSendForm  = Fb2->SendForm;
-    Fb2->SendForm = HookSendForm;
+    OrigSendForm         = Fb2->SendForm;
+    OrigCallback         = Fb2->BrowserCallback;
+    Fb2->SendForm        = HookSendForm;
+    Fb2->BrowserCallback = HookBrowserCallback;
   }
 
   if ((gST->ConOut != NULL) && (gST->ConOut->ClearScreen != NULL)) {
@@ -1422,8 +1511,13 @@ ModelRunSetup (
   if ((gST->ConOut != NULL) && (OrigClear != NULL)) {
     gST->ConOut->ClearScreen = OrigClear;
   }
-  if ((Fb2 != NULL) && (OrigSendForm != NULL)) {
-    Fb2->SendForm = OrigSendForm;
+  if (Fb2 != NULL) {
+    if (OrigSendForm != NULL) {
+      Fb2->SendForm = OrigSendForm;
+    }
+    if (OrigCallback != NULL) {
+      Fb2->BrowserCallback = OrigCallback;
+    }
   }
 
   if (!mRunnerRan && (Runner != NULL)) {
