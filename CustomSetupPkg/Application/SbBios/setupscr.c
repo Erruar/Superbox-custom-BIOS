@@ -57,6 +57,9 @@ STATIC INT32     mBoxAEnd;      /* bottom of the "superbox" bracket box */
 STATIC INT32     mTabH;
 STATIC FORMSET  *mTabFs[MAX_TABS];
 STATIC UINTN     mTabCount = 0;
+STATIC FORMSET  *mTabs[MAX_TABS];
+STATIC UINTN     mTabsCount = 0;
+STATIC BOOLEAN   mHasExitTab = FALSE;
 
 #define S()      GfxUi ()
 #define PADX()   ((INT32)(18 * S ()))
@@ -89,13 +92,19 @@ FitText (
     StrCpyS (Out, OutChars, S);
     return;
   }
-  for (I = (INTN)OutChars - 4; I > 0; I--) {
+  {
+    INT32  Len = (INT32)StrLen (S);
+    if (Len > (INT32)OutChars - 4) {
+      Len = (INT32)OutChars - 4;
+    }
+    for (I = Len; I > 0; I--) {
     CopyMem (Out, S, I * sizeof (CHAR16));
     Out[I]     = '.';
     Out[I + 1] = '.';
     Out[I + 2] = 0;
-    if (GfxTextW (Tab, Count, Out, S ()) <= MaxPx) {
-      return;
+      if (GfxTextW (Tab, Count, Out, S ()) <= MaxPx) {
+        return;
+      }
     }
   }
   Out[0] = 0;
@@ -181,8 +190,10 @@ FooterTop (
  * brackets only.  The tab row and the form list live in their own box
  * on the right (ContentMid is its bottom line), the Help Info box sits
  * under it, and the dashboard box on the left ends on the same bottom
- * line as Help Info, with a clear gap between the two boxes.  There is
- * no frame around the whole viewport.
+ * line as Help Info.  ContentMid deliberately equals the Help box top:
+ * the content box's bottom corner and the Help box's top corner sit at
+ * one level on the seam, mirroring the left column.  There is no frame
+ * around the whole viewport.
  */
 STATIC
 INT32
@@ -209,7 +220,7 @@ ContentMid (
   VOID
   )
 {
-  return HelpTop () - (INT32)(30 * S ());
+  return HelpTop () - (INT32)(4 * S ());
 }
 
 STATIC
@@ -303,32 +314,129 @@ GoBack (
   return TRUE;
 }
 
+typedef struct {
+  EFI_GUID      Guid;
+  CONST CHAR16  *Title;
+} TAB_SPEC;
+
+STATIC CONST TAB_SPEC  mSetupTabSpecs[] = {
+  { { 0xC1E0B01A, 0x607E, 0x4B75, { 0xB8, 0xBB, 0x06, 0x31, 0xEC, 0xFA, 0xAC, 0xF2 } }, L"Main" },
+  { { 0xC6D4769E, 0x7F48, 0x4D2A, { 0x98, 0xE9, 0x87, 0xAD, 0xCC, 0xF3, 0x5C, 0xCC } }, L"Advanced" },
+  { { 0xA6712873, 0x925F, 0x46C6, { 0x90, 0xB4, 0xA4, 0x0F, 0x86, 0xA0, 0x91, 0x7B } }, L"Power" },
+  { { 0x5204F764, 0xDF25, 0x48A2, { 0xB3, 0x37, 0x9E, 0xC1, 0x22, 0xB8, 0x5E, 0x0D } }, L"Security" },
+  { { 0x2D068309, 0x12AC, 0x45AB, { 0x96, 0x00, 0x91, 0x87, 0x51, 0x3C, 0xCD, 0xD8 } }, L"System Configuration" },
+  { { 0xB6936426, 0xFB04, 0x4A7B, { 0xAA, 0x51, 0xFD, 0x49, 0x39, 0x7C, 0xDC, 0x01 } }, L"Exit" }
+};
+
+STATIC
+BOOLEAN
+StrEqNoCase (
+  IN CONST CHAR16  *A,
+  IN CONST CHAR16  *B
+  )
+{
+  if ((A == NULL) || (B == NULL)) {
+    return FALSE;
+  }
+  while ((*A != 0) && (*B != 0)) {
+    CHAR16  Ca = *A++;
+    CHAR16  Cb = *B++;
+    if (Ca >= L'a' && Ca <= L'z') Ca -= 32;
+    if (Cb >= L'a' && Cb <= L'z') Cb -= 32;
+    if (Ca != Cb) {
+      return FALSE;
+    }
+  }
+  return (*A == 0) && (*B == 0);
+}
+
+STATIC
+BOOLEAN
+FormsetHasGuid (
+  IN FORMSET         *Fs,
+  IN CONST EFI_GUID  *Guid
+  )
+{
+  UINTN  I;
+
+  if (CompareGuid (&Fs->Guid, Guid)) {
+    return TRUE;
+  }
+  for (I = 0; I < Fs->ClassGuidCount; I++) {
+    if (CompareGuid (&Fs->ClassGuids[I], Guid)) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+STATIC
+VOID
+BuildTabList (
+  VOID
+  )
+{
+  FORMSET  *F;
+  UINTN    SpecCount = sizeof (mSetupTabSpecs) / sizeof (mSetupTabSpecs[0]);
+  UINTN    I;
+
+  mTabsCount  = 0;
+  mHasExitTab = FALSE;
+
+  for (I = 0; I < SpecCount && mTabsCount < MAX_TABS - 1; I++) {
+    FORMSET  *Match = NULL;
+
+    for (F = mAll; F != NULL; F = F->Next) {
+      if (FormsetHasGuid (F, &mSetupTabSpecs[I].Guid)) {
+        Match = F;
+        break;
+      }
+    }
+    if (Match == NULL) {
+      for (F = mAll; F != NULL; F = F->Next) {
+        if (StrEqNoCase (F->Title, mSetupTabSpecs[I].Title)) {
+          Match = F;
+          break;
+        }
+      }
+    }
+    if (Match != NULL) {
+      mTabs[mTabsCount++] = Match;
+      if (I == SpecCount - 1) {
+        mHasExitTab = TRUE;
+      }
+    }
+  }
+
+  /* Fallback (e.g. QEMU/OVMF without Insyde SetupUtility): show all formsets. */
+  if (mTabsCount == 0) {
+    for (F = mAll; F != NULL && mTabsCount < MAX_TABS - 1; F = F->Next) {
+      mTabs[mTabsCount++] = F;
+    }
+  }
+}
+
 STATIC
 VOID
 SwitchFormset (
   IN INT32  Direction
   )
 {
-  FORMSET  *F, *Target = NULL;
-  UINTN    Count = 0, Index = 0, Current = 0, Want;
+  FORMSET  *Target = NULL;
+  UINTN    Index, Current = 0, Want;
 
-  for (F = mAll; F != NULL; F = F->Next) {
-    if (F == mFs) {
-      Current = Count;
-    }
-    Count++;
-  }
-  if (Count == 0) {
+  if (mTabsCount == 0) {
     return;
   }
-
-  Want = (Current + (UINTN)Direction + Count) % Count;
-  for (F = mAll; F != NULL; F = F->Next, Index++) {
-    if (Index == Want) {
-      Target = F;
+  for (Index = 0; Index < mTabsCount; Index++) {
+    if (mTabs[Index] == mFs) {
+      Current = Index;
       break;
     }
   }
+
+  Want   = (Current + (UINTN)Direction + mTabsCount) % mTabsCount;
+  Target = mTabs[Want];
   if (Target != NULL) {
     mDepth = 0;
     FirstFormOf (Target);
@@ -625,6 +733,24 @@ Activate (
       ToggleCheckbox (S);
       break;
 
+    case ST_ACTION:
+      if (PromptHas (S->Prompt, L"Exit Saving") ||
+          PromptHas (S->Prompt, L"Save & Exit")) {
+        ModelFlush (mFs);
+        ModelExit ();
+        gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
+      } else if (PromptHas (S->Prompt, L"Save Change Without Exit")) {
+        Commit (L"changes saved");
+      } else if (PromptHas (S->Prompt, L"Exit Discarding") ||
+                 PromptHas (S->Prompt, L"Discard Changes")) {
+        ModelExit ();
+        gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
+      } else if (PromptHas (S->Prompt, L"Load Optimal") ||
+                 PromptHas (S->Prompt, L"Load Setup Defaults")) {
+        LoadDefaults ();
+      }
+      break;
+
     default:
       break;
   }
@@ -696,8 +822,11 @@ DrawTabs (
   INT32     SlotW;
   CHAR16    Label[64];
 
-  for (F = mAll; F != NULL; F = F->Next) {
-    Slots++;
+  UINTN     Idx;
+
+  Slots = (INT32)mTabsCount + (mHasExitTab ? 0 : 1);
+  if (Slots < 1) {
+    Slots = 1;
   }
   SlotW = (Avail - (Slots - 1) * Gap) / Slots;
   if (SlotW < Icon + (INT32)(20 * Sc)) {
@@ -708,8 +837,11 @@ DrawTabs (
   mTabH = A (SbSyne16) + (INT32)(12 * Sc);
   mTabCount = 0;
 
-  for (F = mAll; F != NULL && mTabCount < MAX_TABS - 1; F = F->Next) {
-    CHAR16  *Title = F->Title != NULL ? F->Title : L"(unnamed)";
+  for (Idx = 0; Idx < mTabsCount && mTabCount < MAX_TABS; Idx++) {
+    CHAR16  *Title;
+
+    F     = mTabs[Idx];
+    Title = F->Title != NULL ? F->Title : L"(unnamed)";
 
     FitText (FONTW (SbSyne16), Title, SlotW - Icon - (INT32)(12 * Sc),
              Label, 64);
@@ -725,8 +857,8 @@ DrawTabs (
     X += SlotW + Gap;
   }
 
-  /* the Save&Exit chip (always last, dark like the inactive tabs) */
-  if (mTabCount < MAX_TABS) {
+  /* Fallback Save&Exit chip when no Exit formset tab is present */
+  if (!mHasExitTab && (mTabCount < MAX_TABS)) {
     CHAR16  *Title = L"Save&Exit";
 
     mTabX[mTabCount]  = X;
@@ -941,19 +1073,36 @@ DrawContent (
 
     Value = NULL;
     V = ModelVarstore (mFs, R->VarStoreId);
-    if ((R->Kind == ST_TEXT) || (R->Kind == ST_SUBTITLE)) {
-      Value = R->Text2 != NULL ? R->Text2 : L"";
-      T (SbMono16, X, Y + A (SbMono16) - 2 * Sc, Value, COL_INK);
+    if (R->Kind == ST_SUBTITLE) {
+      CHAR16  SubFit[128];
+      CONST CHAR16 *SubTxt = (R->Prompt != NULL && R->Prompt[0] != 0)
+                             ? R->Prompt
+                             : (R->Text2 != NULL ? R->Text2 : L"");
+      FitText (FONTW (SbSyne16), SubTxt, CW - 4 * Sc, SubFit, 128);
+      T (SbSyne16, X, Y + A (SbSyne16) - 2 * Sc, SubFit, COL_ORANGE);
+      Y += RH ();
+      continue;
+    } else if (R->Kind == ST_TEXT) {
+      CHAR16  PFit[128];
+      CHAR16  VFit[128];
+      CONST CHAR16 *P = (R->Prompt != NULL) ? R->Prompt : L"";
+      CONST CHAR16 *T2 = (R->Text2 != NULL) ? R->Text2 : L"";
+      FitText (FONTW (SbMono16), P, ValX - X - 12 * Sc, PFit, 128);
+      FitText (FONTW (SbMono16), T2, X + CW - ValX - 4 * Sc, VFit, 128);
+      T (SbMono16, X, Y + A (SbMono16) - 2 * Sc, PFit, COL_INK);
+      T (SbMono16, ValX, Y + A (SbMono16) - 2 * Sc, VFit, COL_INK);
       Y += RH ();
       continue;
     } else if (R->Kind == ST_REF) {
       CHAR16  Line[256];
+      CHAR16  LFit[256];
       /* the arrow one space behind the name ("Boot Manager >"), set in
        * Syne Semibold like the concept's sub-page rows; 16px, same size
        * as the rest of the list.  The active row is the orange fill,
        * nothing gets an extra outline */
       UnicodeSPrint (Line, sizeof (Line), L"%s >", Prompt);
-      T (SbSyne16, X, Y + A (SbSyne16) - 2 * Sc, Line,
+      FitText (FONTW (SbSyne16), Line, CW - 4 * Sc, LFit, 256);
+      T (SbSyne16, X, Y + A (SbSyne16) - 2 * Sc, LFit,
          Selr ? COL_WHITE : COL_INK);
       Y += RH ();
       continue;
@@ -961,10 +1110,17 @@ DrawContent (
       Value = ModelValueText (R, V);
     }
 
-    T (SbMono16, X, Y + A (SbMono16) - 2 * Sc, Prompt,
-       Selr ? COL_WHITE : COL_INK);
-    T (SbMono16, ValX, Y + A (SbMono16) - 2 * Sc,
-       Value != NULL ? Value : L"", Selr ? COL_WHITE : COL_INK);
+    {
+      CHAR16  PFit[128];
+      CHAR16  VFit[128];
+      FitText (FONTW (SbMono16), Prompt, ValX - X - 12 * Sc, PFit, 128);
+      FitText (FONTW (SbMono16), Value != NULL ? Value : L"",
+               X + CW - ValX - 4 * Sc, VFit, 128);
+      T (SbMono16, X, Y + A (SbMono16) - 2 * Sc, PFit,
+         Selr ? COL_WHITE : COL_INK);
+      T (SbMono16, ValX, Y + A (SbMono16) - 2 * Sc, VFit,
+         Selr ? COL_WHITE : COL_INK);
+    }
 
     if ((Value != NULL) && (Value != R->Text2)) {
       FreePool (Value);
@@ -1398,6 +1554,7 @@ HandleKey (
   }
   if (K->ScanCode == SCAN_F10) {
     ModelFlush (mFs);
+    ModelExit ();
     gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
     return;
   }
@@ -1557,6 +1714,7 @@ SetupEvent (
     if (Tab >= 0) {
       if (mTabFs[Tab] == NULL) {         /* Save&Exit chip */
         ModelFlush (mFs);
+        ModelExit ();
         gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
       } else {
         JumpToFormset (mTabFs[Tab]);
@@ -1627,14 +1785,16 @@ SetupEnter (
   if (!mModelDone) {
     mModelDone  = TRUE;
     mModelStatus = ModelInit ();
+    GfxReapplyMode ();
     for (F = ModelFormsets (); F != NULL; F = F->Next) {
       Count++;
     }
     SbLog ("[setup] formsets", Count, (UINTN)mModelStatus);
     mAll = ModelFormsets ();
     if (!EFI_ERROR (mModelStatus) && (mAll != NULL)) {
+      BuildTabList ();
       mMode = MODE_LIST;
-      FirstFormOf (mAll);
+      FirstFormOf (mTabsCount > 0 ? mTabs[0] : mAll);
     }
   }
   HwUpdate (&mHw);

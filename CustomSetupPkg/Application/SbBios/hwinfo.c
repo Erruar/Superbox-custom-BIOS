@@ -138,7 +138,6 @@ ReadCpuMsr (
 {
   UINT64  Cofvid;
   UINTN   Fid, Did, Vid;
-  STATIC UINTN  LogLeft = 3;
 
   if (!mIsSmu8Apu) {
     return;
@@ -153,9 +152,7 @@ ReadCpuMsr (
   mCpuVoltMv  = Svi2VidToMv (Vid);
   mCpuReal    = (mCpuFreqMHz != 0);
 
-  if (LogLeft-- > 0) {
-    SbLog ("[hw] cofvid freq/mv", mCpuFreqMHz, mCpuVoltMv);
-  }
+
 }
 
 STATIC
@@ -168,7 +165,6 @@ ReadTempFromD0F0 (
   UINT32      Addr = SMU8_REPORTED_TEMP_REG;
   UINT32      Reg = 0;
   UINTN       TempC;
-  STATIC UINTN  LogLeft = 3;   /* the raw read is polled every tick: log thrice */
 
   if (D0F0 == NULL) {
     return;
@@ -179,9 +175,7 @@ ReadTempFromD0F0 (
     return;
   }
   Status = D0F0->Pci.Read (D0F0, EfiPciIoWidthUint32, D0F0_SMU_DATA_REG, 1, &Reg);
-  if (LogLeft-- > 0) {
-    SbLog ("[hw] smu8 temp raw", Status, Reg);
-  }
+
   if (EFI_ERROR (Status) || Reg == 0xFFFFFFFFu) {
     return;
   }
