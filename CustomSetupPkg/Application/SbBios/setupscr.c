@@ -627,9 +627,9 @@ OpenPopup (
 
   if (S->Kind == ST_ONEOF) {
     V   = ModelVarstore (mFs, S->VarStoreId);
-    Cur = ModelRead (S, V, &Valid);
+    Cur = NormValue (S, ModelRead (S, V, &Valid));
     for (I = 0; I < S->OptionCount; I++) {
-      if (S->Options[I].Value == Cur) {
+      if (NormValue (S, S->Options[I].Value) == Cur) {
         mPopupSel = I;
         break;
       }

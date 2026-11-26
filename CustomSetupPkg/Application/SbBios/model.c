@@ -595,10 +595,34 @@ ModelValueText (
       }
       if (S->OptionCount > 0) {
         /*
-         * The stored value is outside the published option set (vendor
-         * presets, hidden options).  Show it as a plain number: "0x1"
-         * told the user nothing, and the value is at least decimal.
+         * The stored value is outside the published option set.  Show
+         * it as a plain number and log the raw comparison once per
+         * question: the field's bytes tell exactly why the match
+         * failed (width, flags, option values).
          */
+        STATIC STMT  *DbgSeen[24];
+        UINTN        K;
+        BOOLEAN      Fresh = TRUE;
+
+        for (K = 0; K < sizeof (DbgSeen) / sizeof (DbgSeen[0]); K++) {
+          if (DbgSeen[K] == S) {
+            Fresh = FALSE;
+            break;
+          }
+        }
+        if (Fresh) {
+          for (K = 0; K < sizeof (DbgSeen) / sizeof (DbgSeen[0]); K++) {
+            if (DbgSeen[K] == NULL) {
+              DbgSeen[K] = S;
+              break;
+            }
+          }
+          SbLog6 ("[val] nm", (UINTN)S->Prompt,
+                  ((UINTN)S->Width << 8) | (UINTN)S->NumFlags,
+                  Value, S->OptionCount,
+                  S->Options[0].Value,
+                  S->OptionCount > 1 ? S->Options[1].Value : 0);
+        }
         FreePool (Text);
         Text = AllocateZeroPool (48 * sizeof (CHAR16));
         if (Text != NULL) {
