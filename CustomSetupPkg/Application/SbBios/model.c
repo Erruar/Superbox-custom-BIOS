@@ -169,14 +169,23 @@ HookBrowserCallback (
     return EFI_NOT_FOUND;
   }
 
-  Status = mCfg->BlockToConfig (
-                   mCfg,
-                   L"GUID=00000000000000000000000000000000&NAME=0000&PATH=00",
-                   V->Data,
-                   V->DataSize,
-                   &CfgResp,
-                   &Prog
-                   );
+  {
+    CHAR16  ReqBuf[128];
+
+    UnicodeSPrint (
+      ReqBuf, sizeof (ReqBuf),
+      L"GUID=00000000000000000000000000000000&NAME=0000&PATH=00&OFFSET=0&WIDTH=%04X",
+      (UINTN)V->DataSize
+      );
+    Status = mCfg->BlockToConfig (
+                     mCfg,
+                     ReqBuf,
+                     V->Data,
+                     V->DataSize,
+                     &CfgResp,
+                     &Prog
+                     );
+  }
   if (EFI_ERROR (Status) || (CfgResp == NULL)) {
     return EFI_NOT_FOUND;
   }
@@ -592,9 +601,17 @@ ModelFlush (
     Status = EFI_UNSUPPORTED;
     if ((Ca != NULL) && (mCfg != NULL) && (Hdr != NULL) &&
         (StrCmp (V->Name, L"SystemConfig") == 0)) {
+      UINTN       ReqChars   = StrLen (Hdr) + 32;
+      CHAR16      *Req       = AllocateZeroPool (ReqChars * sizeof (CHAR16));
       EFI_STRING  ConfigResp = NULL;
 
-      Status = mCfg->BlockToConfig (mCfg, Hdr, V->Data, V->DataSize, &ConfigResp, &Progress);
+      if (Req != NULL) {
+        UnicodeSPrint (Req, ReqChars * sizeof (CHAR16), L"%s&OFFSET=0&WIDTH=%04X",
+                       Hdr, (UINTN)V->DataSize);
+        Status = mCfg->BlockToConfig (mCfg, Req, V->Data, V->DataSize, &ConfigResp, &Progress);
+        SbLog ("[model] btc", (UINTN)Status, (UINTN)V->DataSize);
+        FreePool (Req);
+      }
       if (!EFI_ERROR (Status) && (ConfigResp != NULL)) {
         mActiveFlushVar = V;
         Status = Ca->RouteConfig (Ca, ConfigResp, &Progress);
@@ -602,6 +619,9 @@ ModelFlush (
         SbLog ("[model] route", (UINTN)Status, 0);
         FreePool (ConfigResp);
       }
+    } else {
+      SbLog6 ("[model] flush skip", (UINTN)(Ca != NULL), (UINTN)(mCfg != NULL),
+              (UINTN)(Hdr != NULL), (UINTN)V->DataSize, 0, 0);
     }
 
     if (EFI_ERROR (Status)) {
