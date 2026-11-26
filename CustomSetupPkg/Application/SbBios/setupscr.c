@@ -63,11 +63,30 @@ STATIC BOOLEAN   mHasExitTab = FALSE;
 
 #define S()      GfxUi ()
 #define PADX()   ((INT32)(18 * S ()))
-#define A(f)     GfxAscent (FONTW (f))
-#define T(f,x,b,s,c)       GfxText (x, b, FONT (f), s, c, S ())
-#define TW(f,s)            GfxTextW (FONTW (f), s, S ())
+
+#define SB_CAT2(a, b)  a##b
+#define SB_CAT(a, b)   SB_CAT2 (a, b)
+#define SbSyne30_HI    SbSyne64
+#define SbSyne26_HI    SbSyne34
+#define SbSyne22_HI    SbSyne34
+#define SbSyne16_HI    SbSyne30
+#define SbMono44_HI    SbMono44
+#define SbMono24_HI    SbMono44
+#define SbMono16_HI    SbMono24
+#define SbMonoB16_HI   SbMono24
+
+#define FONT_HI(f)     SB_CAT (f, _HI)
+#define FTAB(f)        (S () >= 2 ? SB_CAT (FONT_HI (f), _Tab)  : SB_CAT (f, _Tab))
+#define FCNT(f)        (S () >= 2 ? (sizeof (SB_CAT (FONT_HI (f), _Tab)) / sizeof (SB_CAT (FONT_HI (f), _Tab)[0])) : (sizeof (SB_CAT (f, _Tab)) / sizeof (SB_CAT (f, _Tab)[0])))
+#define FBITS(f)       (S () >= 2 ? SB_CAT (FONT_HI (f), _Bits) : SB_CAT (f, _Bits))
+#define FONT_UI(f)     FTAB (f), FCNT (f), FBITS (f)
+#define FONTW_UI(f)    FTAB (f), FCNT (f)
+
+#define A(f)           GfxAscent (FONTW_UI (f))
+#define T(f,x,b,s,c)   GfxText (x, b, FONT_UI (f), s, c, 1)
+#define TW(f,s)        GfxTextW (FONTW_UI (f), s, 1)
 #define RH()               ((INT32)(22 * S ()))
-#define CONTENT_X()        ((INT32)(GfxWidth () * 24 / 100))
+#define CONTENT_X()        ((INT32)(GfxWidth () * (S () >= 2 ? 27 : 24) / 100))
 #define CONTENT_W()        ((INT32)GfxWidth () - CONTENT_X () - PADX ())
 
 /*
@@ -88,7 +107,7 @@ FitText (
 {
   INT32  I;
 
-  if (GfxTextW (Tab, Count, S, S ()) <= MaxPx) {
+  if (GfxTextW (Tab, Count, S, 1) <= MaxPx) {
     StrCpyS (Out, OutChars, S);
     return;
   }
@@ -102,7 +121,7 @@ FitText (
     Out[I]     = '.';
     Out[I + 1] = '.';
     Out[I + 2] = 0;
-      if (GfxTextW (Tab, Count, Out, S ()) <= MaxPx) {
+      if (GfxTextW (Tab, Count, Out, 1) <= MaxPx) {
         return;
       }
     }
@@ -845,7 +864,7 @@ DrawTabs (
     F     = mTabs[Idx];
     Title = F->Title != NULL ? F->Title : L"(unnamed)";
 
-    FitText (FONTW (SbSyne16), Title, SlotW - Icon - (INT32)(12 * Sc),
+    FitText (FONTW_UI (SbSyne16), Title, SlotW - Icon - (INT32)(12 * Sc),
              Label, 64);
     mTabX[mTabCount]  = X;
     mTabW[mTabCount]  = SlotW;
@@ -1080,7 +1099,7 @@ DrawContent (
       CONST CHAR16 *SubTxt = (R->Prompt != NULL && R->Prompt[0] != 0)
                              ? R->Prompt
                              : (R->Text2 != NULL ? R->Text2 : L"");
-      FitText (FONTW (SbSyne16), SubTxt, CW - 4 * Sc, SubFit, 128);
+      FitText (FONTW_UI (SbSyne16), SubTxt, CW - 4 * Sc, SubFit, 128);
       T (SbSyne16, X, Y + A (SbSyne16) - 2 * Sc, SubFit, COL_ORANGE);
       Y += RH ();
       continue;
@@ -1089,8 +1108,8 @@ DrawContent (
       CHAR16  VFit[128];
       CONST CHAR16 *P = (R->Prompt != NULL) ? R->Prompt : L"";
       CONST CHAR16 *T2 = (R->Text2 != NULL) ? R->Text2 : L"";
-      FitText (FONTW (SbMono16), P, ValX - X - 12 * Sc, PFit, 128);
-      FitText (FONTW (SbMono16), T2, X + CW - ValX - 4 * Sc, VFit, 128);
+      FitText (FONTW_UI (SbMono16), P, ValX - X - 12 * Sc, PFit, 128);
+      FitText (FONTW_UI (SbMono16), T2, X + CW - ValX - 4 * Sc, VFit, 128);
       T (SbMono16, X, Y + A (SbMono16) - 2 * Sc, PFit, COL_INK);
       T (SbMono16, ValX, Y + A (SbMono16) - 2 * Sc, VFit, COL_INK);
       Y += RH ();
@@ -1103,7 +1122,7 @@ DrawContent (
        * as the rest of the list.  The active row is the orange fill,
        * nothing gets an extra outline */
       UnicodeSPrint (Line, sizeof (Line), L"%s >", Prompt);
-      FitText (FONTW (SbSyne16), Line, CW - 4 * Sc, LFit, 256);
+      FitText (FONTW_UI (SbSyne16), Line, CW - 4 * Sc, LFit, 256);
       T (SbSyne16, X, Y + A (SbSyne16) - 2 * Sc, LFit,
          Selr ? COL_WHITE : COL_INK);
       Y += RH ();
@@ -1115,8 +1134,8 @@ DrawContent (
     {
       CHAR16  PFit[128];
       CHAR16  VFit[128];
-      FitText (FONTW (SbMono16), Prompt, ValX - X - 12 * Sc, PFit, 128);
-      FitText (FONTW (SbMono16), Value != NULL ? Value : L"",
+      FitText (FONTW_UI (SbMono16), Prompt, ValX - X - 12 * Sc, PFit, 128);
+      FitText (FONTW_UI (SbMono16), Value != NULL ? Value : L"",
                X + CW - ValX - 4 * Sc, VFit, 128);
       T (SbMono16, X, Y + A (SbMono16) - 2 * Sc, PFit,
          Selr ? COL_WHITE : COL_INK);
