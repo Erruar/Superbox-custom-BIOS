@@ -572,6 +572,26 @@ ModelValueText (
           return StrDup (S->Options[I].Label != NULL ? S->Options[I].Label : L"?");
         }
       }
+      if (S->OptionCount > 0) {
+        /*
+         * The stored value is outside the published option set (vendor
+         * presets, hidden options).  Show it as a plain number: "0x1"
+         * told the user nothing, and the value is at least decimal.
+         */
+        FreePool (Text);
+        Text = AllocateZeroPool (48 * sizeof (CHAR16));
+        if (Text != NULL) {
+          UnicodeSPrint (Text, 48 * sizeof (CHAR16), L"%lu", Value);
+        }
+        return Text;
+      }
+      {
+        STATIC UINTN  DbgLeft = 24;   /* field debug budget, then quiet */
+        if (DbgLeft-- > 0) {
+          SbLog ("[val] oneof0", (UINTN)S->Op,
+                 ((UINTN)S->Width << 8) | (UINTN)S->NumFlags);
+        }
+      }
       break;
 
     case ST_CHECKBOX:
@@ -582,7 +602,14 @@ ModelValueText (
       Text = AllocateZeroPool (48 * sizeof (CHAR16));
       if (Text != NULL) {
         if ((S->NumFlags & EFI_IFR_DISPLAY) == EFI_IFR_DISPLAY_UINT_HEX) {
-          UnicodeSPrint (Text, 48 * sizeof (CHAR16), L"0x%lX", Value);
+          /*
+           * The vendor marked the field hex-displayed, so the stock
+           * setup shows "0x1" and we used to copy that.  A plain
+           * number is the readable text equivalent; keep the hex in
+           * brackets for the fields that are genuinely bit masks.
+           */
+          UnicodeSPrint (Text, 48 * sizeof (CHAR16), L"%lu (0x%lX)",
+                         Value, Value);
         } else if ((S->NumFlags & EFI_IFR_DISPLAY) == EFI_IFR_DISPLAY_INT_DEC) {
           UnicodeSPrint (Text, 48 * sizeof (CHAR16), L"%ld", (INT64)Value);
         } else {
