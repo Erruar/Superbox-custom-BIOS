@@ -543,6 +543,26 @@ ModelWrite (
   return EFI_SUCCESS;
 }
 
+/*
+ * Normalize a raw varstore value for ONEOF comparison.  Insyde packs
+ * many selects into 2-byte fields while the ONE_OF_OPTION entries carry
+ * 1-byte values (e.g. stored 0x103, option 0x03), so compare the
+ * significant bytes of both sides.
+ */
+UINT64
+NormValue (
+  IN STMT   *S,
+  IN UINT64  Value
+  )
+{
+  UINTN  W = S->Width != 0 ? S->Width : 1;
+
+  if (W >= 8) {
+    return Value;
+  }
+  return Value & (((UINT64)1 << (8 * W)) - 1);
+}
+
 CHAR16 *
 ModelValueText (
   IN STMT      *S,
@@ -567,8 +587,9 @@ ModelValueText (
 
   switch (S->Kind) {
     case ST_ONEOF:
+      Value = NormValue (S, Value);
       for (I = 0; I < S->OptionCount; I++) {
-        if (S->Options[I].Value == Value) {
+        if (NormValue (S, S->Options[I].Value) == Value) {
           return StrDup (S->Options[I].Label != NULL ? S->Options[I].Label : L"?");
         }
       }
