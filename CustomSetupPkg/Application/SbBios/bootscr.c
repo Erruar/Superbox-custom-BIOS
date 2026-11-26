@@ -339,6 +339,262 @@ CollectEntries (
   SbLog ("[boot] last", mLastNum, mPrevNum);
 }
 
+
+STATIC
+VOID
+DrawRoundBox (
+  IN INT32   X,
+  IN INT32   Y,
+  IN INT32   W,
+  IN INT32   H,
+  IN INT32   R,
+  IN UINT32  Color
+  )
+{
+  if (R * 2 > W) {
+    R = W / 2;
+  }
+  if (R * 2 > H) {
+    R = H / 2;
+  }
+  if (R <= 0) {
+    GfxFill (X, Y, W, H, Color);
+    return;
+  }
+  GfxFill (X + R, Y, W - 2 * R, H, Color);
+  GfxFill (X, Y + R, W, H - 2 * R, Color);
+  GfxCircle (X + R, Y + R, R, Color, TRUE);
+  GfxCircle (X + W - R - 1, Y + R, R, Color, TRUE);
+  GfxCircle (X + R, Y + H - R - 1, R, Color, TRUE);
+  GfxCircle (X + W - R - 1, Y + H - R - 1, R, Color, TRUE);
+}
+
+STATIC
+INT32
+DrawKeycap (
+  IN INT32         X,
+  IN INT32         BaseY,
+  IN CONST CHAR16  *Key,
+  IN BOOLEAN       Hi,
+  IN BOOLEAN       UseSyneIcon
+  )
+{
+  INT32  Asc  = Hi ? GfxAscent (FONTW (SbSyne34)) : GfxAscent (FONTW (SbMono19));
+  INT32  Kw   = Hi ? GfxTextW (FONTW (SbSyne34), Key, 1) : GfxTextW (FONTW (SbMono19), Key, 1);
+  INT32  PadX = Hi ? 14 : 7;
+  INT32  PadY = Hi ? 8 : 4;
+  INT32  BoxW = Kw + PadX * 2;
+  INT32  BoxH = Asc + PadY * 2;
+  INT32  MinW = BoxH;
+  INT32  BoxY = BaseY - Asc - PadY;
+  INT32  Rad  = Hi ? 8 : 4;
+
+  if (BoxW < MinW) {
+    BoxW = MinW;
+  }
+  DrawRoundBox (X, BoxY, BoxW, BoxH, Rad, COL_CARD);
+
+  if (Hi) {
+    if (UseSyneIcon) {
+      GfxText (X + (BoxW - Kw) / 2, BaseY, FONT (SbSyne34), Key, COL_WHITE, 1);
+    } else {
+      INT32  MAsc = GfxAscent (FONTW (SbMono44));
+      INT32  MKw  = GfxTextW (FONTW (SbMono44), Key, 1);
+      if (MKw + PadX * 2 > BoxW) {
+        /* use SbSyne34 for wide F10 so keycap stays compact */
+        GfxText (X + (BoxW - Kw) / 2, BaseY, FONT (SbSyne34), Key, COL_WHITE, 1);
+      } else {
+        GfxText (X + (BoxW - MKw) / 2, BoxY + (BoxH + MAsc) / 2, FONT (SbMono44), Key, COL_WHITE, 1);
+      }
+    }
+  } else {
+    if (UseSyneIcon) {
+      INT32  SAsc = GfxAscent (FONTW (SbSyne22));
+      INT32  SKw  = GfxTextW (FONTW (SbSyne22), Key, 1);
+      GfxText (X + (BoxW - SKw) / 2, BoxY + (BoxH + SAsc) / 2, FONT (SbSyne22), Key, COL_WHITE, 1);
+    } else {
+      GfxText (X + (BoxW - Kw) / 2, BaseY, FONT (SbMono19), Key, COL_WHITE, 1);
+    }
+  }
+
+  return X + BoxW;
+}
+
+STATIC
+EFI_STATUS
+LaunchFsFile (
+  IN EFI_HANDLE                       FsHandle,
+  IN EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *Fs,
+  IN CONST CHAR16                     *FileName
+  )
+{
+  EFI_FILE_PROTOCOL         *Root = NULL;
+  EFI_FILE_PROTOCOL         *File = NULL;
+  EFI_DEVICE_PATH_PROTOCOL  *Dp   = NULL;
+  EFI_HANDLE                Child = NULL;
+  EFI_STATUS                Status;
+  UINT8                     InfoBuf[sizeof (EFI_FILE_INFO) + 256];
+  UINTN                     InfoSize = sizeof (InfoBuf);
+  UINTN                     Size = 0;
+  UINT8                     *Buf = NULL;
+
+  Status = Fs->OpenVolume (Fs, &Root);
+  if (EFI_ERROR (Status) || (Root == NULL)) {
+    return Status;
+  }
+  Status = Root->Open (Root, &File, (CHAR16 *)FileName, EFI_FILE_MODE_READ, 0);
+  if (EFI_ERROR (Status) || (File == NULL)) {
+    Root->Close (Root);
+    return Status;
+  }
+  Status = File->GetInfo (File, &gEfiFileInfoGuid, &InfoSize, InfoBuf);
+  if (!EFI_ERROR (Status)) {
+    Size = (UINTN)((EFI_FILE_INFO *)InfoBuf)->FileSize;
+    Buf  = AllocatePool (Size);
+    if (Buf != NULL) {
+      Status = File->Read (File, &Size, Buf);
+    } else {
+      Status = EFI_OUT_OF_RESOURCES;
+    }
+  }
+  File->Close (File);
+  Root->Close (Root);
+
+  if (EFI_ERROR (Status) || (Buf == NULL)) {
+    if (Buf != NULL) {
+      FreePool (Buf);
+    }
+    return Status;
+  }
+
+  Dp     = FileDevicePath (FsHandle, FileName);
+  Status = gBS->LoadImage (FALSE, gImageHandle, Dp, Buf, Size, &Child);
+  FreePool (Buf);
+  if (Dp != NULL) {
+    FreePool (Dp);
+  }
+  SbLog ("[boot] loadimg", (UINTN)Status, Size);
+  if (!EFI_ERROR (Status)) {
+    Status = gBS->StartImage (Child, NULL, NULL);
+    SbLog ("[boot] startimg", (UINTN)Status, 0);
+    GfxReapplyMode ();
+  }
+  return Status;
+}
+
+STATIC
+BOOLEAN
+TryDirectBootFromDp (
+  IN EFI_DEVICE_PATH_PROTOCOL  *Dp,
+  IN UINTN                     DpMaxLen
+  )
+{
+  EFI_HANDLE  *Handles = NULL;
+  UINTN       Count    = 0;
+  UINTN       Index;
+  UINT8       *Raw     = (UINT8 *)Dp;
+  CHAR16      FilePath[260];
+  UINTN       FpPos    = 0;
+  BOOLEAN     IsHd     = FALSE;
+  UINT32      HdPart   = 0;
+  UINT8       HdSig[16];
+  UINTN       DpPrefixLen = 0;
+
+  if ((Dp == NULL) || (DpMaxLen < 4)) {
+    return FALSE;
+  }
+
+  FilePath[0] = 0;
+  ZeroMem (HdSig, sizeof (HdSig));
+
+  {
+    UINTN  Pos = 0;
+    while (Pos + 4 <= DpMaxLen) {
+      UINT8   Type    = Raw[Pos];
+      UINT8   SubType = Raw[Pos + 1];
+      UINT16  NodeLen = (UINT16)(Raw[Pos + 2] | (Raw[Pos + 3] << 8));
+
+      if (NodeLen < 4 || Pos + NodeLen > DpMaxLen) {
+        break;
+      }
+      if ((Type == END_DEVICE_PATH_TYPE) && (SubType == END_ENTIRE_DEVICE_PATH_SUBTYPE)) {
+        DpPrefixLen = Pos;
+        break;
+      }
+      if ((Type == MEDIA_DEVICE_PATH) && (SubType == MEDIA_HARDDRIVE_DP) && (NodeLen >= 42)) {
+        IsHd   = TRUE;
+        HdPart = *(UINT32 *)(Raw + Pos + 4);
+        CopyMem (HdSig, Raw + Pos + 24, 16);
+      } else if ((Type == MEDIA_DEVICE_PATH) && (SubType == MEDIA_FILEPATH_DP) && (NodeLen > 4)) {
+        UINTN  Chars = (NodeLen - 4) / sizeof (CHAR16);
+        UINTN  K;
+        for (K = 0; K < Chars && FpPos + 1 < 260; K++) {
+          CHAR16  Ch = (CHAR16)(Raw[Pos + 4 + K * 2] | (Raw[Pos + 5 + K * 2] << 8));
+          if (Ch == 0) {
+            break;
+          }
+          FilePath[FpPos++] = Ch;
+        }
+        FilePath[FpPos] = 0;
+      }
+      Pos += NodeLen;
+    }
+  }
+
+  if (EFI_ERROR (gBS->LocateHandleBuffer (ByProtocol,
+                     &gEfiSimpleFileSystemProtocolGuid, NULL, &Count, &Handles))) {
+    return FALSE;
+  }
+
+  for (Index = 0; Index < Count; Index++) {
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *Fs = NULL;
+    EFI_DEVICE_PATH_PROTOCOL         *Hdp = NULL;
+    BOOLEAN                          Match = FALSE;
+
+    if (EFI_ERROR (gBS->HandleProtocol (Handles[Index],
+           &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs)) || (Fs == NULL)) {
+      continue;
+    }
+    Hdp = DevicePathFromHandle (Handles[Index]);
+    if (Hdp == NULL) {
+      continue;
+    }
+
+    if (IsHd && (FilePath[0] != 0)) {
+      UINT8  *Hp = (UINT8 *)Hdp;
+      while (!(Hp[0] == END_DEVICE_PATH_TYPE && Hp[1] == END_ENTIRE_DEVICE_PATH_SUBTYPE)) {
+        UINT16  NLen = (UINT16)(Hp[2] | (Hp[3] << 8));
+        if (NLen < 4) {
+          break;
+        }
+        if ((Hp[0] == MEDIA_DEVICE_PATH) && (Hp[1] == MEDIA_HARDDRIVE_DP) && (NLen >= 42)) {
+          UINT32  PNum = *(UINT32 *)(Hp + 4);
+          if ((PNum == HdPart) && (CompareMem (Hp + 24, HdSig, 16) == 0)) {
+            Match = TRUE;
+            break;
+          }
+        }
+        Hp += NLen;
+      }
+      if (Match && !EFI_ERROR (LaunchFsFile (Handles[Index], Fs, FilePath))) {
+        FreePool (Handles);
+        return TRUE;
+      }
+    } else if (!IsHd && (DpPrefixLen >= 4)) {
+      if (CompareMem (Hdp, Raw, DpPrefixLen) == 0) {
+        CONST CHAR16  *Target = FilePath[0] != 0 ? FilePath : L"\\EFI\\BOOT\\BOOTX64.EFI";
+        if (!EFI_ERROR (LaunchFsFile (Handles[Index], Fs, Target))) {
+          FreePool (Handles);
+          return TRUE;
+        }
+      }
+    }
+  }
+
+  FreePool (Handles);
+  return FALSE;
+}
+
 STATIC
 VOID
 BootTo (
@@ -377,20 +633,10 @@ BootTo (
         }
       }
       if ((FpLen >= 4) && (Pos + FpLen <= Size)) {
-        EFI_DEVICE_PATH_PROTOCOL  *Dp    = (EFI_DEVICE_PATH_PROTOCOL *)(Data + Pos);
-        EFI_HANDLE                Child  = NULL;
-        EFI_STATUS                St;
-
-        St = gBS->LoadImage (FALSE, gImageHandle, Dp, NULL, 0, &Child);
-        SbLog ("[boot] loadimg", Num, (UINTN)St);
-        if (!EFI_ERROR (St)) {
-          St = gBS->StartImage (Child, NULL, NULL);
-          SbLog ("[boot] startimg", Num, (UINTN)St);
-          GfxReapplyMode ();
+        EFI_DEVICE_PATH_PROTOCOL  *Dp = (EFI_DEVICE_PATH_PROTOCOL *)(Data + Pos);
+        if (TryDirectBootFromDp (Dp, FpLen)) {
           FreePool (Data);
-          if (!EFI_ERROR (St)) {
-            return;
-          }
+          return;
         }
       }
       FreePool (Data);
@@ -598,49 +844,144 @@ BootDraw (
       }
     }
 
-    /* press to continue */
-    if (Hi) {
-      GfxText (Mar, H * 62 / 100, FONT (SbSyne64), PRESS_TXT, COL_INK, 1);
-      GfxText (Mar, H * 78 / 100, FONT (SbMono24), HINTS_TXT, COL_INK, 1);
-      GfxText (Mar, H * 86 / 100, FONT (SbMono24), SIGN_TXT, COL_INK, 1);
-    } else {
-      GfxText (Mar, H * 62 / 100, FONT (SbSyne34), PRESS_TXT, COL_INK, 1);
-      GfxText (Mar, H * 78 / 100, FONT (SbMono19), HINTS_TXT, COL_INK, 1);
-      GfxText (Mar, H * 86 / 100, FONT (SbMono19), SIGN_TXT, COL_INK, 1);
-    }
-
-    /* brand mark: the lightning polygon + power line */
+    /* press [↩] to continue */
     {
-      INTN  BoltX = W * 64 / 100;
-      INTN  BoltW = H * 36 / 100;
-      INTN  BoltH = H * 48 / 100;
-      INTN  Tw;
-      INT32 Pts[6][2];
-      INTN  Kx[6] = { 600, 100, 400, 250, 900, 550 };
-      INTN  Ky[6] = { 0, 500, 500, 1000, 400, 400 };
-
-      for (I = 0; I < 6; I++) {
-        Pts[I][0] = BoltX + Kx[I] * BoltW / 1000;
-        Pts[I][1] = H * 8 / 100 + Ky[I] * BoltH / 1000;
-      }
-      GfxPolyFill (Pts, 6, COL_ORANGE);
+      INT32  Py = H * 62 / 100;
+      INT32  Px = Mar;
+      INT32  GapK = Hi ? 18 : 9;
 
       if (Hi) {
-        Tw = GfxTextW (FONTW (SbSyne34), POWER_TXT, 1);
-        GfxText (BoltX + BoltW / 2 - Tw / 2, H * 64 / 100, FONT (SbSyne34),
-                 POWER_TXT, COL_INK, 1);
+        Px += GfxText (Px, Py, FONT (SbSyne64), L"PRESS", COL_INK, 1) + GapK;
+        Px  = DrawKeycap (Px, Py - 6, L"\x21B5", TRUE, TRUE) + GapK;
+        GfxText (Px, Py, FONT (SbSyne64), L"TO CONTINUE", COL_INK, 1);
+      } else {
+        Px += GfxText (Px, Py, FONT (SbSyne34), L"PRESS", COL_INK, 1) + GapK;
+        Px  = DrawKeycap (Px, Py - 2, L"\x21B5", FALSE, TRUE) + GapK;
+        GfxText (Px, Py, FONT (SbSyne34), L"TO CONTINUE", COL_INK, 1);
+      }
+    }
+
+    /* footer keycap hints + signature */
+    {
+      INT32  Fy   = H * 78 / 100;
+      INT32  Fx   = Mar;
+      INT32  Sp   = Hi ? 14 : 7;
+      INT32  Sep  = Hi ? 34 : 18;
+
+      if (Hi) {
+        Fx = DrawKeycap (Fx, Fy, L"\x21C5", TRUE, TRUE) + Sp;
+        Fx += GfxText (Fx, Fy, FONT (SbMono44), L"NAVIGATE", COL_INK, 1) + Sep;
+        Fx = DrawKeycap (Fx, Fy, L"E", TRUE, FALSE) + Sp;
+        Fx += GfxText (Fx, Fy, FONT (SbMono44), L"EDIT", COL_INK, 1) + Sep;
+        Fx = DrawKeycap (Fx, Fy, L"C", TRUE, FALSE) + Sp;
+        Fx += GfxText (Fx, Fy, FONT (SbMono44), L"CONSOLE", COL_INK, 1) + Sep;
+        Fx = DrawKeycap (Fx, Fy, L"F10", TRUE, FALSE) + Sp;
+        GfxText (Fx, Fy, FONT (SbMono44), L"SETUP", COL_INK, 1);
+        GfxText (Mar, H * 87 / 100, FONT (SbMono44), SIGN_TXT, COL_INK, 1);
+      } else {
+        Fx = DrawKeycap (Fx, Fy, L"\x21C5", FALSE, TRUE) + Sp;
+        Fx += GfxText (Fx, Fy, FONT (SbMono19), L"NAVIGATE", COL_INK, 1) + Sep;
+        Fx = DrawKeycap (Fx, Fy, L"E", FALSE, FALSE) + Sp;
+        Fx += GfxText (Fx, Fy, FONT (SbMono19), L"EDIT", COL_INK, 1) + Sep;
+        Fx = DrawKeycap (Fx, Fy, L"C", FALSE, FALSE) + Sp;
+        Fx += GfxText (Fx, Fy, FONT (SbMono19), L"CONSOLE", COL_INK, 1) + Sep;
+        Fx = DrawKeycap (Fx, Fy, L"F10", FALSE, FALSE) + Sp;
+        GfxText (Fx, Fy, FONT (SbMono19), L"SETUP", COL_INK, 1);
+        GfxText (Mar, H * 87 / 100, FONT (SbMono19), SIGN_TXT, COL_INK, 1);
+      }
+    }
+
+    /*
+     * Brand mark: lightning polygon with pencil-soft corners.  Plain
+     * Chaikin cuts every corner and turns a spiked bolt into a blob, so
+     * sharp vertices are duplicated first: a doubled control point is a
+     * fixed point of the scheme, the curve passes exactly through the
+     * tip and only the wide-angle corners get rounded.
+     */
+    {
+      INTN   BoltX = W * 64 / 100;
+      INTN   BoltW = H * 36 / 100;
+      INTN   BoltH = H * 48 / 100;
+      INTN   Tw, X;
+      INT32  Base[6][2];
+      INT32  P0[64][2], P1[64][2];
+      INTN   N = 0, Iter, K;
+      INTN   Kx[6] = { 600, 100, 400, 250, 900, 550 };
+      INTN   Ky[6] = { 0, 500, 500, 1000, 400, 400 };
+
+      for (I = 0; I < 6; I++) {
+        Base[I][0] = BoltX + Kx[I] * BoltW / 1000;
+        Base[I][1] = H * 8 / 100 + Ky[I] * BoltH / 1000;
+      }
+      for (I = 0; I < 6; I++) {
+        INT32  *Prev = Base[(I + 5) % 6];
+        INT32  *Next = Base[(I + 1) % 6];
+        INTN    Ax = Prev[0] - Base[I][0];
+        INTN    Ay = Prev[1] - Base[I][1];
+        INTN    Bx = Next[0] - Base[I][0];
+        INTN    By = Next[1] - Base[I][1];
+        INTN    Dot  = Ax * Bx + Ay * By;
+        INTN    La2  = Ax * Ax + Ay * Ay;
+        INTN    Lb2  = Bx * Bx + By * By;
+        BOOLEAN Sharp;
+
+        /* angle at the vertex <= ~99 deg counts as a spike */
+        Sharp = (BOOLEAN)((Dot >= 0) || (36 * Dot * Dot <= La2 * Lb2));
+
+        P0[N][0] = Base[I][0];
+        P0[N][1] = Base[I][1];
+        N++;
+        if (Sharp) {
+          P0[N][0] = Base[I][0];
+          P0[N][1] = Base[I][1];
+          N++;
+        }
+      }
+      for (Iter = 0; Iter < 2; Iter++) {
+        for (K = 0; K < N; K++) {
+          INTN  NextK = (K + 1) % N;
+          P1[K * 2][0]     = (3 * P0[K][0] + P0[NextK][0]) / 4;
+          P1[K * 2][1]     = (3 * P0[K][1] + P0[NextK][1]) / 4;
+          P1[K * 2 + 1][0] = (P0[K][0] + 3 * P0[NextK][0]) / 4;
+          P1[K * 2 + 1][1] = (P0[K][1] + 3 * P0[NextK][1]) / 4;
+        }
+        N *= 2;
+        for (K = 0; K < N; K++) {
+          P0[K][0] = P1[K][0];
+          P0[K][1] = P1[K][1];
+        }
+      }
+      GfxPolyFill (P0, (UINTN)N, COL_ORANGE);
+
+      /* centered under the bolt, clamped to the page margins */
+      if (Hi) {
+        Tw = GfxTextW (FONTW (SbSyne64), POWER_TXT, 1);
+        X  = BoltX + BoltW / 2 - Tw / 2;
+        if (X + Tw > W - Mar) {
+          X = W - Mar - Tw;
+        }
+        if (X < Mar) {
+          X = Mar;
+        }
+        GfxText (X, H * 64 / 100, FONT (SbSyne64), POWER_TXT, COL_INK, 1);
       } else {
         Tw = GfxTextW (FONTW (SbSyne26), POWER_TXT, 1);
-        GfxText (BoltX + BoltW / 2 - Tw / 2, H * 64 / 100, FONT (SbSyne26),
-                 POWER_TXT, COL_INK, 1);
+        X  = BoltX + BoltW / 2 - Tw / 2;
+        if (X + Tw > W - Mar) {
+          X = W - Mar - Tw;
+        }
+        if (X < Mar) {
+          X = Mar;
+        }
+        GfxText (X, H * 64 / 100, FONT (SbSyne26), POWER_TXT, COL_INK, 1);
       }
     }
 
     if (mStatusMsg[0] != 0) {
       if (Hi) {
-        GfxText (Mar, H * 93 / 100, FONT (SbMono24), mStatusMsg, COL_CARD, 1);
+        GfxText (Mar, H * 94 / 100, FONT (SbMono44), mStatusMsg, COL_CARD, 1);
       } else {
-        GfxText (Mar, H * 93 / 100, FONT (SbMono19), mStatusMsg, COL_CARD, 1);
+        GfxText (Mar, H * 94 / 100, FONT (SbMono19), mStatusMsg, COL_CARD, 1);
       }
     }
   }

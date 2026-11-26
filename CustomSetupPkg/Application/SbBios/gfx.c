@@ -241,9 +241,9 @@ GfxPolyFill (
   )
 {
   INTN   I, K, J, MinY, MaxY, N;
-  INTN   Xs[32];
+  INTN   Xs[96];
 
-  if (Count < 3 || Count > 32) {
+  if (Count < 3 || Count > 96) {
     return;
   }
   MinY = MaxY = Pts[0][1];
@@ -278,8 +278,12 @@ GfxPolyFill (
       }
     }
     if (N >= 2) {
-      for (I = Xs[0]; I <= Xs[N - 1]; I++) {
-        Plot ((INT32)I, J, Color);
+      /* even-odd: fill each crossing pair as its own span, so concave
+       * polygons (the lightning bolt) do not overfill their notches */
+      for (I = 0; I + 1 < N; I += 2) {
+        for (K = Xs[I]; K <= Xs[I + 1]; K++) {
+          Plot ((INT32)K, J, Color);
+        }
       }
     }
   }
