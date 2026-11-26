@@ -78,6 +78,11 @@ SbBiosMain (
       if (BootWantSetup ()) {
         Screen = SCR_SETUP;
         SetupEnter ();
+        if (SetupWantBoot ()) {
+          Screen = SCR_BOOT;
+          GfxReapplyMode ();
+          BootEnter ();
+        }
       } else {
         BootDraw ();
       }

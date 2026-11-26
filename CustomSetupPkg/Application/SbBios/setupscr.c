@@ -43,10 +43,10 @@ STATIC UINTN       mDepth    = 0;
 STATIC FORMSET    *mAll      = NULL;
 STATIC BOOLEAN     mHelp     = FALSE;      /* F1 overlay visible         */
 STATIC BOOLEAN     mWantBoot = FALSE;
+STATIC BOOLEAN     mWantReset = FALSE;
 STATIC CHAR16      mStatus[128];
 STATIC HW_INFO     mHw;
 STATIC UINTN       mHwMinute = 0xFFFFFFFF;
-STATIC BOOLEAN     mModelDone = FALSE;
 STATIC EFI_STATUS  mModelStatus = EFI_NOT_STARTED;
 
 /* tab strip geometry, hit-tested by the mouse (Last entry = Save&Exit) */
@@ -502,6 +502,7 @@ StepOneOf (
         : (Hit + (UINTN)Direction + S->OptionCount) % S->OptionCount;
 
   ModelWrite (S, V, S->Options[Hit].Value);
+  ModelNotifyChanged (mFs, S, S->Options[Hit].Value);
   Commit (S->Prompt != NULL ? S->Prompt : L"setting");
 }
 
@@ -537,6 +538,7 @@ StepNumeric (
   }
 
   ModelWrite (S, V, (UINT64)Next);
+  ModelNotifyChanged (mFs, S, (UINT64)Next);
   Commit (S->Prompt != NULL ? S->Prompt : L"value");
 }
 
@@ -556,6 +558,7 @@ ToggleCheckbox (
   }
   Cur = ModelRead (S, V, &Valid);
   ModelWrite (S, V, Cur != 0 ? 0 : 1);
+  ModelNotifyChanged (mFs, S, Cur != 0 ? 0 : 1);
   Commit (S->Prompt != NULL ? S->Prompt : L"option");
 }
 
@@ -566,7 +569,7 @@ ToggleCheckbox (
  * question flag 0x08 and pick min/optimal/max in bits 5:4.  CHECKBOX has
  * no default encoding in IFR at all, so checkboxes are left alone.
  */
-#define SB_OPT_FLAG_DEFAULT  0x01
+#define SB_OPT_FLAG_DEFAULT  0x10
 #define SB_Q_FLAG_DEFAULT    0x08
 
 STATIC
@@ -736,13 +739,13 @@ Activate (
       if (PromptHas (S->Prompt, L"Exit Saving") ||
           PromptHas (S->Prompt, L"Save & Exit")) {
         ModelFlush (mFs);
-        ModelExit ();
+        mWantReset = TRUE;
         gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
       } else if (PromptHas (S->Prompt, L"Save Change Without Exit")) {
         Commit (L"changes saved");
       } else if (PromptHas (S->Prompt, L"Exit Discarding") ||
                  PromptHas (S->Prompt, L"Discard Changes")) {
-        ModelExit ();
+        mWantReset = TRUE;
         gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
       } else if (PromptHas (S->Prompt, L"Load Optimal") ||
                  PromptHas (S->Prompt, L"Load Setup Defaults")) {
@@ -1492,6 +1495,7 @@ PickPopup (
   if (mPopupSel < mPopup->OptionCount) {
     V = ModelVarstore (mFs, mPopup->VarStoreId);
     ModelWrite (mPopup, V, mPopup->Options[mPopupSel].Value);
+    ModelNotifyChanged (mFs, mPopup, mPopup->Options[mPopupSel].Value);
     Commit (mPopup->Prompt != NULL ? mPopup->Prompt : L"setting");
   }
   mMode  = MODE_LIST;
@@ -1556,7 +1560,7 @@ HandleKey (
   }
   if (K->ScanCode == SCAN_F10) {
     ModelFlush (mFs);
-    ModelExit ();
+    mWantReset = TRUE;
     gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
     return;
   }
@@ -1716,7 +1720,7 @@ SetupEvent (
     if (Tab >= 0) {
       if (mTabFs[Tab] == NULL) {         /* Save&Exit chip */
         ModelFlush (mFs);
-        ModelExit ();
+        mWantReset = TRUE;
         gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
       } else {
         JumpToFormset (mTabFs[Tab]);
@@ -1772,35 +1776,91 @@ SetupWantBoot (
   return mWantBoot;
 }
 
+STATIC
+BOOLEAN
+SetupSessionRunner (
+  VOID
+  )
+{
+  FORMSET      *F;
+  UINTN        Count = 0;
+  INPUT_EVENT  Event;
+  INT32        CursorX, CursorY;
+  UINTN        Laps = 0;
+
+  mModelStatus = ModelInit ();
+  GfxReapplyMode ();
+
+  for (F = ModelFormsets (); F != NULL; F = F->Next) {
+    Count++;
+  }
+  SbLog ("[setup] formsets", Count, (UINTN)mModelStatus);
+  mAll = ModelFormsets ();
+  if (!EFI_ERROR (mModelStatus) && (mAll != NULL)) {
+    BuildTabList ();
+    mMode = MODE_LIST;
+    FirstFormOf (mTabsCount > 0 ? mTabs[0] : mAll);
+  }
+
+  HwUpdate (&mHw);
+  mHwMinute = (UINTN)mHw.Time[0] * 100 + mHw.Time[1];
+  SetupDraw ();
+  InputGetCursor (&CursorX, &CursorY);
+  GfxSetCursor (CursorX, CursorY, TRUE);
+  GfxPresent ();
+
+  while (!mWantBoot && !mWantReset) {
+    UINT32  Type = InputPoll (&Event);
+
+    if (Type == EV_NONE) {
+      gBS->Stall (8000);
+      if (++Laps >= 100u) {
+        Laps = 0;
+        SetupTick ();
+        InputGetCursor (&CursorX, &CursorY);
+        GfxSetCursor (CursorX, CursorY, TRUE);
+        GfxPresent ();
+      }
+      continue;
+    }
+
+    if (Type == EV_MOVE) {
+      InputGetCursor (&CursorX, &CursorY);
+      GfxSetCursor (CursorX, CursorY, TRUE);
+      GfxPresent ();
+      continue;
+    }
+
+    Laps = 0;
+    SetupEvent (&Event);
+    if (mWantBoot || mWantReset) {
+      break;
+    }
+    SetupDraw ();
+    InputGetCursor (&CursorX, &CursorY);
+    GfxSetCursor (CursorX, CursorY, TRUE);
+    GfxPresent ();
+  }
+
+  return mWantBoot;
+}
+
 EFI_STATUS
 SetupEnter (
   VOID
   )
 {
-  FORMSET  *F;
-  UINTN    Count = 0;
-
-  mHelp     = FALSE;
-  mWantBoot = FALSE;
+  mHelp      = FALSE;
+  mWantBoot  = FALSE;
+  mWantReset = FALSE;
   mStatus[0] = 0;
+  mDepth     = 0;
+  mFs        = NULL;
+  mForm      = NULL;
+  mAll       = NULL;
+  mTabsCount = 0;
 
-  if (!mModelDone) {
-    mModelDone  = TRUE;
-    mModelStatus = ModelInit ();
-    GfxReapplyMode ();
-    for (F = ModelFormsets (); F != NULL; F = F->Next) {
-      Count++;
-    }
-    SbLog ("[setup] formsets", Count, (UINTN)mModelStatus);
-    mAll = ModelFormsets ();
-    if (!EFI_ERROR (mModelStatus) && (mAll != NULL)) {
-      BuildTabList ();
-      mMode = MODE_LIST;
-      FirstFormOf (mTabsCount > 0 ? mTabs[0] : mAll);
-    }
-  }
-  HwUpdate (&mHw);
-  mHwMinute = (UINTN)mHw.Time[0] * 100 + mHw.Time[1];
-  SetupDraw ();
+  ModelRunSetup (SetupSessionRunner);
+  ModelExit ();
   return EFI_SUCCESS;
 }

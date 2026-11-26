@@ -155,6 +155,7 @@ VOID       InputSetCursor (INT32 X, INT32 Y);
 typedef struct STMT {
   UINT8          Kind;
   UINT8          Op;
+  UINT16         QuestionId;
   UINT16         QFlags;
   UINT16         VarStoreId;
   UINT16         Offset;
@@ -212,7 +213,10 @@ typedef struct FORMSET {
   struct FORMSET *Next;
 } FORMSET;
 
+typedef BOOLEAN (*SB_SETUP_RUNNER) (VOID);
 EFI_STATUS ModelInit (VOID);
+EFI_STATUS ModelRunSetup (IN SB_SETUP_RUNNER Runner);
+VOID       ModelNotifyChanged (IN FORMSET *Fs, IN STMT *S, IN UINT64 Value);
 VOID       ModelExit (VOID);
 FORMSET   *ModelFormsets (VOID);
 FORM      *ModelForm (FORMSET *Fs, UINT16 FormId);
