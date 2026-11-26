@@ -189,11 +189,10 @@ FooterTop (
  * The concept's panel grid.  Every panel is bounded by pencil corner
  * brackets only.  The tab row and the form list live in their own box
  * on the right (ContentMid is its bottom line), the Help Info box sits
- * under it, and the dashboard box on the left ends on the same bottom
- * line as Help Info.  ContentMid deliberately equals the Help box top:
- * the content box's bottom corner and the Help box's top corner sit at
- * one level on the seam, mirroring the left column.  There is no frame
- * around the whole viewport.
+ * under it with a clear vertical gap, and the dashboard box on the left
+ * ends on the same bottom line as Help Info.  The two right-hand boxes
+ * share left and right edge x, so their corner marks stack on common
+ * verticals.  There is no frame around the whole viewport.
  */
 STATIC
 INT32
@@ -220,7 +219,7 @@ ContentMid (
   VOID
   )
 {
-  return HelpTop () - (INT32)(4 * S ());
+  return HelpTop () - (INT32)(30 * S ());
 }
 
 STATIC
