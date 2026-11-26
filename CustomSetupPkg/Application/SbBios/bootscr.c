@@ -388,7 +388,13 @@ DrawKeycap (
   INT32  MinW = BoxH;
   INT32  BoxY = BaseY - Asc - PadY;
   INT32  Rad  = Hi ? 8 : 4;
+  INT32  Lift = Hi ? 5 : 2;
 
+  /*
+   * Glyphs inside the keycap are centered by font ascent, which
+   * includes the descender zone the printed glyph never uses; the
+   * marks sat low, so nudge the baselines up a touch.
+   */
   if (BoxW < MinW) {
     BoxW = MinW;
   }
@@ -396,24 +402,24 @@ DrawKeycap (
 
   if (Hi) {
     if (UseSyneIcon) {
-      GfxText (X + (BoxW - Kw) / 2, BaseY, FONT (SbSyne34), Key, COL_WHITE, 1);
+      GfxText (X + (BoxW - Kw) / 2, BaseY - Lift, FONT (SbSyne34), Key, COL_WHITE, 1);
     } else {
       INT32  MAsc = GfxAscent (FONTW (SbMono44));
       INT32  MKw  = GfxTextW (FONTW (SbMono44), Key, 1);
       if (MKw + PadX * 2 > BoxW) {
         /* use SbSyne34 for wide F10 so keycap stays compact */
-        GfxText (X + (BoxW - Kw) / 2, BaseY, FONT (SbSyne34), Key, COL_WHITE, 1);
+        GfxText (X + (BoxW - Kw) / 2, BaseY - Lift, FONT (SbSyne34), Key, COL_WHITE, 1);
       } else {
-        GfxText (X + (BoxW - MKw) / 2, BoxY + (BoxH + MAsc) / 2, FONT (SbMono44), Key, COL_WHITE, 1);
+        GfxText (X + (BoxW - MKw) / 2, BoxY + (BoxH + MAsc) / 2 - Lift, FONT (SbMono44), Key, COL_WHITE, 1);
       }
     }
   } else {
     if (UseSyneIcon) {
       INT32  SAsc = GfxAscent (FONTW (SbSyne22));
       INT32  SKw  = GfxTextW (FONTW (SbSyne22), Key, 1);
-      GfxText (X + (BoxW - SKw) / 2, BoxY + (BoxH + SAsc) / 2, FONT (SbSyne22), Key, COL_WHITE, 1);
+      GfxText (X + (BoxW - SKw) / 2, BoxY + (BoxH + SAsc) / 2 - Lift, FONT (SbSyne22), Key, COL_WHITE, 1);
     } else {
-      GfxText (X + (BoxW - Kw) / 2, BaseY, FONT (SbMono19), Key, COL_WHITE, 1);
+      GfxText (X + (BoxW - Kw) / 2, BaseY - Lift, FONT (SbMono19), Key, COL_WHITE, 1);
     }
   }
 
@@ -925,8 +931,13 @@ BootDraw (
         INTN    Lb2  = Bx * Bx + By * By;
         BOOLEAN Sharp;
 
-        /* angle at the vertex <= ~99 deg counts as a spike */
-        Sharp = (BOOLEAN)((Dot >= 0) || (36 * Dot * Dot <= La2 * Lb2));
+        /*
+         * Only true needles (<= ~45 deg) get pinned.  The bolt's wing
+         * tips and notches sit between 45 and 90 deg, so they keep
+         * their Chaikin rounding; the threshold is cos 45, i.e.
+         * 2*dot^2 vs |a|^2*|b|^2.
+         */
+        Sharp = (BOOLEAN)((Dot >= 0) && (2 * Dot * Dot >= La2 * Lb2));
 
         P0[N][0] = Base[I][0];
         P0[N][1] = Base[I][1];
