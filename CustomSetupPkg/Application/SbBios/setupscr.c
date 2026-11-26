@@ -1274,10 +1274,11 @@ DrawPopup (
     UINT64  Cur;
     BOOLEAN Valid;
 
-    Cur = ModelRead (mPopup, V, &Valid);
+    Cur = NormValue (mPopup, ModelRead (mPopup, V, &Valid));
     for (I = 0; I < mPopup->OptionCount; I++) {
       BOOLEAN  Sel   = (I == mPopupSel);
-      CHAR16   *Mark = (mPopup->Options[I].Value == Cur) ? L"* " : L"  ";
+      CHAR16   *Mark = (NormValue (mPopup, mPopup->Options[I].Value) == Cur)
+                       ? L"* " : L"  ";
       CHAR16   *Label = mPopup->Options[I].Label;
 
       if (Y + RH () > PanY + PanH - (INT32)(34 * Sc)) {

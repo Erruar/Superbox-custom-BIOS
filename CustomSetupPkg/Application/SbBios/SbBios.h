@@ -220,6 +220,7 @@ VARSTORE  *ModelVarstore (FORMSET *Fs, UINT16 VarStoreId);
 EFI_STATUS ModelLoad (FORMSET *Fs);
 EFI_STATUS ModelFlush (FORMSET *Fs);
 UINT64     ModelRead (STMT *S, VARSTORE *V, BOOLEAN *Valid);
+UINT64     NormValue (STMT *S, UINT64 Value);
 EFI_STATUS ModelWrite (STMT *S, VARSTORE *V, UINT64 Value);
 CHAR16    *ModelValueText (STMT *S, VARSTORE *V);
 CHAR16    *ModelGetString (FORMSET *Fs, EFI_STRING_ID Id);
