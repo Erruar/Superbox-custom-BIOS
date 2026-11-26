@@ -219,7 +219,7 @@ ContentMid (
   VOID
   )
 {
-  return HelpTop () - (INT32)(30 * S ());
+  return HelpTop () - (INT32)(26 * S ());
 }
 
 STATIC
