@@ -22,6 +22,7 @@ STATIC CONST UINT8  mCursorShape[CURSOR_H] = {
 };
 
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL  *mGop = NULL;
+STATIC UINT32                        mTargetMode = 0;
 STATIC UINT32                        *mBack = NULL;
 STATIC UINT32                        *mStage = NULL;      /* R/B swap copy  */
 STATIC UINTN                          mPitch = 0;
@@ -797,6 +798,7 @@ GfxInit (
     }
   }
 
+  mTargetMode = mGop->Mode->Mode;
   GfxMeasure ();
 
   mBack = AllocateZeroPool ((UINTN)mWidth * mHeight * sizeof (UINT32));
@@ -856,6 +858,9 @@ GfxStepMode (
   }
 
   Status = mGop->SetMode (mGop, (UINT32)Index);
+  if (!EFI_ERROR (Status)) {
+    mTargetMode = (UINT32)Index;
+  }
   if (EFI_ERROR (Status)) {
     SbLog ("[gfx] SetMode fail", (UINTN)Index, (UINTN)Status);
     return Status;
@@ -939,6 +944,21 @@ GfxBackBuffer (
   return mBack;
 }
 
+
+VOID
+GfxReapplyMode (
+  VOID
+  )
+{
+  if (mGop == NULL) {
+    return;
+  }
+  mGop->SetMode (mGop, mTargetMode);
+  if ((gST->ConOut != NULL) && (gST->ConOut->EnableCursor != NULL)) {
+    gST->ConOut->EnableCursor (gST->ConOut, FALSE);
+  }
+}
+
 EFI_STATUS
 GfxPresent (
   VOID
@@ -949,6 +969,17 @@ GfxPresent (
 
   if ((mGop == NULL) || (mBack == NULL)) {
     return EFI_NOT_READY;
+  }
+
+  /* Restore GOP mode if firmware (e.g. SetupUtility) switched to text mode. */
+  if ((mGop->Mode != NULL) &&
+      ((mGop->Mode->Mode != mTargetMode) ||
+       (mGop->Mode->Info->HorizontalResolution != (UINT32)mWidth) ||
+       (mGop->Mode->Info->VerticalResolution != (UINT32)mHeight))) {
+    mGop->SetMode (mGop, mTargetMode);
+    if ((gST->ConOut != NULL) && (gST->ConOut->EnableCursor != NULL)) {
+      gST->ConOut->EnableCursor (gST->ConOut, FALSE);
+    }
   }
 
   if (mCurVisible) {

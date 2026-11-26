@@ -109,6 +109,7 @@ VOID       GfxPencilCorners (INT32 X, INT32 Y, INT32 W, INT32 H, INT32 Arm,
 
 VOID       GfxSetCursor (INT32 X, INT32 Y, BOOLEAN Visible);
 EFI_STATUS GfxPresent (VOID);
+VOID       GfxReapplyMode (VOID);
 EFI_STATUS GfxStepMode (INTN Direction);
 EFI_STATUS GfxScreenshot (CHAR16 *Result, UINTN ResultChars);  /* BMP to FAT */
 
@@ -200,6 +201,8 @@ typedef struct VARSTORE {
 
 typedef struct FORMSET {
   EFI_GUID        Guid;
+  EFI_GUID        ClassGuids[4];
+  UINTN           ClassGuidCount;
   CHAR16         *Title;
   EFI_HII_HANDLE  Handle;
   CHAR8           Lang[8];

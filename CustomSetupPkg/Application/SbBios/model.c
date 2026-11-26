@@ -32,6 +32,163 @@ STATIC EFI_HII_STRING_PROTOCOL         *mHiiStr = NULL;
 STATIC EFI_HII_CONFIG_ROUTING_PROTOCOL *mCfg    = NULL;
 STATIC FORMSET                         *mFormsets = NULL;
 
+/* Insyde H2O EFI_SETUP_UTILITY_APPLICATION_PROTOCOL_GUID  */
+STATIC EFI_GUID  mSetupAppGuid = {
+  0xE7A97370, 0x00FF, 0x4BBA, { 0xBB, 0xA0, 0xD0, 0xBC, 0x20, 0x0C, 0xCE, 0x98 }
+};
+STATIC EFI_GUID  mFormBrowser2Guid = {
+  0xB9D4C360, 0xBCFB, 0x4F9B, { 0x92, 0x98, 0x53, 0xC1, 0x36, 0x98, 0x22, 0x58 }
+};
+
+typedef
+EFI_STATUS
+(EFIAPI *SB_SEND_FORM) (
+  IN CONST VOID  *This,
+  IN VOID        *Handles,
+  IN UINTN       HandleCount,
+  IN EFI_GUID    *FormSetGuid,
+  IN UINT16      FormId,
+  IN CONST VOID  *ScreenDimensions,
+  OUT UINTN      *ActionRequest
+  );
+
+typedef struct {
+  SB_SEND_FORM  SendForm;
+} SB_FORM_BROWSER2;
+
+STATIC EFI_HANDLE    mSetupAppHandle = NULL;
+STATIC UINT32       *mSetupAppPhase  = NULL;
+STATIC EFI_RAISE_TPL mOrigRaiseTpl   = NULL;
+
+STATIC
+EFI_TPL
+EFIAPI
+SafeRaiseTpl (
+  IN EFI_TPL  NewTpl
+  )
+{
+  /*
+   * SetupUtility.efi's notify callback runs at TPL=7 and calls RaiseTPL(6)
+   * on exit from SendForm, which violates NewTpl >= CurrentTpl and hangs. 
+   */
+  if (NewTpl == 6) {
+    return 7;
+  }
+  return mOrigRaiseTpl (NewTpl);
+}
+
+STATIC
+EFI_STATUS
+EFIAPI
+NoopRemovePackageList (
+  IN CONST EFI_HII_DATABASE_PROTOCOL  *This,
+  IN EFI_HII_HANDLE                   Handle
+  )
+{
+  (VOID)This;
+  (VOID)Handle;
+  return EFI_SUCCESS;
+}
+
+STATIC
+EFI_STATUS
+EFIAPI
+NoopClearScreen (
+  IN EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL  *This
+  )
+{
+  (VOID)This;
+  return EFI_SUCCESS;
+}
+
+STATIC
+EFI_STATUS
+EFIAPI
+DummySendForm (
+  IN CONST VOID  *This,
+  IN VOID        *Handles,
+  IN UINTN       HandleCount,
+  IN EFI_GUID    *FormSetGuid,
+  IN UINT16      FormId,
+  IN CONST VOID  *ScreenDimensions,
+  OUT UINTN      *ActionRequest
+  )
+{
+  (VOID)This;
+  (VOID)Handles;
+  (VOID)HandleCount;
+  (VOID)FormSetGuid;
+  (VOID)FormId;
+  (VOID)ScreenDimensions;
+  if (ActionRequest != NULL) {
+    *ActionRequest = 3; /* EFI_BROWSER_ACTION_REQUEST_EXIT */
+  }
+  return EFI_SUCCESS;
+}
+
+STATIC
+VOID
+InitSetupUtility (
+  VOID
+  )
+{
+  VOID                       *Existing = NULL;
+  SB_FORM_BROWSER2           *Fb2      = NULL;
+  SB_SEND_FORM               OrigSendForm = NULL;
+  EFI_TEXT_CLEAR_SCREEN          OrigClear      = NULL;
+  EFI_HII_DATABASE_REMOVE_PACK   OrigRemovePack = NULL;
+  EFI_STATUS                     Status;
+
+  if (!EFI_ERROR (gBS->LocateProtocol (&mSetupAppGuid, NULL, &Existing))) {
+    return;
+  }
+
+  mSetupAppPhase = AllocateZeroPool (sizeof (UINT32));
+  if (mSetupAppPhase == NULL) {
+    return;
+  }
+
+  if (!EFI_ERROR (gBS->LocateProtocol (&mFormBrowser2Guid, NULL, (VOID **)&Fb2)) &&
+      (Fb2 != NULL)) {
+    OrigSendForm  = Fb2->SendForm;
+    Fb2->SendForm = DummySendForm;
+  }
+
+  if ((gST->ConOut != NULL) && (gST->ConOut->ClearScreen != NULL)) {
+    OrigClear                 = gST->ConOut->ClearScreen;
+    gST->ConOut->ClearScreen  = NoopClearScreen;
+  }
+
+  if (mHiiDb != NULL) {
+    OrigRemovePack           = mHiiDb->RemovePackageList;
+    mHiiDb->RemovePackageList = NoopRemovePackageList;
+  }
+
+  mOrigRaiseTpl  = gBS->RaiseTPL;
+  gBS->RaiseTPL  = SafeRaiseTpl;
+
+  *mSetupAppPhase = 0; /* 0 = Initialize: triggers SetupUtility.efi to publish HII forms */
+  Status = gBS->InstallProtocolInterface (
+                  &mSetupAppHandle,
+                  &mSetupAppGuid,
+                  EFI_NATIVE_INTERFACE,
+                  mSetupAppPhase
+                  );
+
+  gBS->RaiseTPL = mOrigRaiseTpl;
+  if ((mHiiDb != NULL) && (OrigRemovePack != NULL)) {
+    mHiiDb->RemovePackageList = OrigRemovePack;
+  }
+  if ((gST->ConOut != NULL) && (OrigClear != NULL)) {
+    gST->ConOut->ClearScreen = OrigClear;
+  }
+  if ((Fb2 != NULL) && (OrigSendForm != NULL)) {
+    Fb2->SendForm = OrigSendForm;
+  }
+
+  SbLog ("[model] setup app init", (UINTN)Status, 0);
+}
+
 /* ------------------------------------------------------------- utilities */
 
 STATIC
@@ -169,11 +326,10 @@ AddVarstore (
     }
   } else if (OpCode == EFI_IFR_VARSTORE_OP) {
     Classic = (EFI_IFR_VARSTORE *)Op;
-    V->Type     = VS_CLASSIC;
-    V->Id       = Classic->VarStoreId;
-    V->Guid     = Classic->Guid;
-    V->Size     = Classic->Size;
-    V->ReadOnly = TRUE;      /* GUID is a varstore tag, not a variable GUID */
+    V->Type = VS_CLASSIC;
+    V->Id   = Classic->VarStoreId;
+    V->Guid = Classic->Guid;
+    V->Size = Classic->Size;
     for (Index = 0; Index < 71 && Classic->Name[Index] != 0; Index++) {
       V->Name[Index] = (CHAR16)Classic->Name[Index];
     }
@@ -227,10 +383,10 @@ ModelLoad (
   }
 
   for (V = Fs->Vars; V != NULL; V = V->Next) {
-    if (V->Type != VS_EFI) {
+    if ((V->Type != VS_EFI) && (V->Type != VS_CLASSIC)) {
       continue;
     }
-    if (V->Data != NULL) {
+    if (V->Dirty && (V->Data != NULL)) {
       continue;
     }
 
@@ -239,7 +395,18 @@ ModelLoad (
 
     /* Ask for the real size first; the IFR declaration can be smaller. */
     Status = gRT->GetVariable (V->Name, &V->Guid, &Attributes, &Size, NULL);
+    if ((Status == EFI_NOT_FOUND) && (V->Type == VS_CLASSIC) &&
+        (StrCmp (V->Name, L"SystemConfig") == 0)) {
+      /* Insyde SetupUtility maps IFR "SystemConfig" to NVRAM variable "Setup". */
+      StrCpyS (V->Name, 72, L"Setup");
+      Size   = 0;
+      Status = gRT->GetVariable (V->Name, &V->Guid, &Attributes, &Size, NULL);
+    }
     if (EFI_ERROR (Status) && (Status != EFI_BUFFER_TOO_SMALL)) {
+      if (V->Type == VS_CLASSIC) {
+        V->ReadOnly = TRUE;
+        continue;
+      }
       Size = V->Size;
     }
     if (Size < V->Size) {
@@ -248,9 +415,14 @@ ModelLoad (
     if (Size == 0) {
       Size = 4;
     }
-    V->Data = AllocateZeroPool (Size);
-    if (V->Data == NULL) {
-      return EFI_OUT_OF_RESOURCES;
+    if ((V->Data == NULL) || (V->DataSize < Size)) {
+      if (V->Data != NULL) {
+        FreePool (V->Data);
+      }
+      V->Data = AllocateZeroPool (Size);
+      if (V->Data == NULL) {
+        return EFI_OUT_OF_RESOURCES;
+      }
     }
 
     Status = gRT->GetVariable (V->Name, &V->Guid, &Attributes, &Size, V->Data);
@@ -492,12 +664,15 @@ STATIC
 FORMSET *
 NewFormset (
   IN UINT8          *Op,
+  IN UINT8           Len,
   IN EFI_HII_HANDLE  Handle,
   IN CHAR8           *Lang
   )
 {
   EFI_IFR_FORM_SET  *Fs = (EFI_IFR_FORM_SET *)Op;
   FORMSET           *N;
+  UINTN             ClassCount;
+  UINTN             Index;
 
   N = AllocateZeroPool (sizeof (FORMSET));
   if (N == NULL) {
@@ -506,6 +681,17 @@ NewFormset (
   N->Guid   = Fs->Guid;
   N->Handle = Handle;
   AsciiStrnCpyS (N->Lang, sizeof (N->Lang), Lang, sizeof (N->Lang) - 1);
+
+  if (Len >= 23) {
+    ClassCount = Op[22] & 0x03;
+    if (ClassCount > 4) {
+      ClassCount = 4;
+    }
+    for (Index = 0; Index < ClassCount && (23 + (Index + 1) * sizeof (EFI_GUID)) <= Len; Index++) {
+      CopyMem (&N->ClassGuids[Index], Op + 23 + Index * sizeof (EFI_GUID), sizeof (EFI_GUID));
+      N->ClassGuidCount++;
+    }
+  }
   return N;
 }
 
@@ -580,7 +766,7 @@ ParseIfr (
   FORMSET            *Fs = NULL;
   FORM               *Form = NULL;
   STMT               *St = NULL;
-  UINTN              TraceLeft = 600;   /* field debugging budget */
+  UINTN              TraceLeft = 0;   /* field debugging budget */
 
   Ptr = Base;
   End = Base + Size;
@@ -610,7 +796,7 @@ ParseIfr (
 
     switch (H->OpCode) {
       case EFI_IFR_FORM_SET_OP:
-        Fs = NewFormset (Ptr, Handle, Lang);
+        Fs = NewFormset (Ptr, Len, Handle, Lang);
         if (Fs != NULL) {
           Fs->Title = ModelGetString (Fs, ((EFI_IFR_FORM_SET *)Ptr)->FormSetTitle);
           Fs->Next  = mFormsets;
@@ -862,6 +1048,9 @@ ModelInit (
   }
   gBS->LocateProtocol (&gEfiHiiConfigRoutingProtocolGuid, NULL, (VOID **)&mCfg);
 
+  /* Trigger Insyde SetupUtility.efi to publish its HII package lists. */
+  InitSetupUtility ();
+
   /* Two-call enumeration: first the size, then the handle array. */
   Count   = 0;
   CfgSize = 0;
@@ -953,6 +1142,24 @@ ModelExit (
   VOID
   )
 {
+  if ((mSetupAppHandle != NULL) && (mSetupAppPhase != NULL)) {
+    *mSetupAppPhase = 1; /* 1 = Exit: notify SetupUtility.efi to clean up */
+    gBS->ReinstallProtocolInterface (
+           mSetupAppHandle,
+           &mSetupAppGuid,
+           mSetupAppPhase,
+           mSetupAppPhase
+           );
+    gBS->UninstallProtocolInterface (
+           mSetupAppHandle,
+           &mSetupAppGuid,
+           mSetupAppPhase
+           );
+    FreePool (mSetupAppPhase);
+    mSetupAppHandle = NULL;
+    mSetupAppPhase  = NULL;
+  }
+
   /*
    * The model lives in boot services memory for the whole life of the
    * application; exit boot services frees it.  Keeping the tree avoids
