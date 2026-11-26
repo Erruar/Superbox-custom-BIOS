@@ -340,6 +340,32 @@ CollectEntries (
 }
 
 
+/*
+ * Integer square root (Newton).  Inputs here are squared deltas of
+ * screen coordinates, so a handful of iterations converges.
+ */
+STATIC
+INTN
+IntSqrt (
+  IN INTN  V
+  )
+{
+  INTN  G;
+  INTN  T;
+
+  if (V <= 0) {
+    return 0;
+  }
+  G = V;
+  while (TRUE) {
+    T = (G + V / G) / 2;
+    if (T >= G) {
+      return G;
+    }
+    G = T;
+  }
+}
+
 STATIC
 VOID
 DrawRoundBox (
@@ -898,20 +924,20 @@ BootDraw (
     }
 
     /*
-     * Brand mark: lightning polygon with pencil-soft corners.  Plain
-     * Chaikin cuts every corner and turns a spiked bolt into a blob, so
-     * sharp vertices are duplicated first: a doubled control point is a
-     * fixed point of the scheme, the curve passes exactly through the
-     * tip and only the wide-angle corners get rounded.
+     * Brand mark: lightning polygon rounded like a fat marker stroke:
+     * every convex corner gets a constant-radius arc (the tips read as
+     * round caps), concave notches stay sharp.  Per corner the two cut
+     * points sit at radius distance along the edges and three conic
+     * samples bulge through the vertex, all in integer math.
      */
     {
       INTN   BoltX = W * 64 / 100;
       INTN   BoltW = H * 36 / 100;
       INTN   BoltH = H * 48 / 100;
-      INTN   Tw, X;
+      INTN   Tw, X, R, Area;
       INT32  Base[6][2];
-      INT32  P0[64][2], P1[64][2];
-      INTN   N = 0, Iter, K;
+      INT32  P0[64][2];
+      INTN   N = 0, J, T;
       INTN   Kx[6] = { 600, 100, 400, 250, 900, 550 };
       INTN   Ky[6] = { 0, 500, 500, 1000, 400, 400 };
 
@@ -919,48 +945,61 @@ BootDraw (
         Base[I][0] = BoltX + Kx[I] * BoltW / 1000;
         Base[I][1] = H * 8 / 100 + Ky[I] * BoltH / 1000;
       }
+
+      Area = 0;
       for (I = 0; I < 6; I++) {
-        INT32  *Prev = Base[(I + 5) % 6];
-        INT32  *Next = Base[(I + 1) % 6];
-        INTN    Ax = Prev[0] - Base[I][0];
-        INTN    Ay = Prev[1] - Base[I][1];
-        INTN    Bx = Next[0] - Base[I][0];
-        INTN    By = Next[1] - Base[I][1];
-        INTN    Dot  = Ax * Bx + Ay * By;
-        INTN    La2  = Ax * Ax + Ay * Ay;
-        INTN    Lb2  = Bx * Bx + By * By;
-        BOOLEAN Sharp;
+        J = (I + 1) % 6;
+        Area += Base[I][0] * Base[J][1] - Base[J][0] * Base[I][1];
+      }
+      R = BoltW / 8;
 
-        /*
-         * Only true needles (<= ~45 deg) get pinned.  The bolt's wing
-         * tips and notches sit between 45 and 90 deg, so they keep
-         * their Chaikin rounding; the threshold is cos 45, i.e.
-         * 2*dot^2 vs |a|^2*|b|^2.
-         */
-        Sharp = (BOOLEAN)((Dot >= 0) && (2 * Dot * Dot >= La2 * Lb2));
+      for (I = 0; I < 6; I++) {
+        INT32  *Pv = Base[I];
+        INT32  *Pa = Base[(I + 5) % 6];
+        INT32  *Pb = Base[(I + 1) % 6];
+        INTN    Ax = Pa[0] - Pv[0];
+        INTN    Ay = Pa[1] - Pv[1];
+        INTN    Bx = Pb[0] - Pv[0];
+        INTN    By = Pb[1] - Pv[1];
+        INTN    La = IntSqrt (Ax * Ax + Ay * Ay);
+        INTN    Lb = IntSqrt (Bx * Bx + By * By);
+        INTN    Ra = R;
+        INTN    Rb = R;
+        INT32   In0, In1, Out0, Out1;
 
-        P0[N][0] = Base[I][0];
-        P0[N][1] = Base[I][1];
+        /* screen space is Y-down, so convexity means opposite signs */
+        if ((Ax * By - Ay * Bx) * Area >= 0) {
+          /* concave: keep the notch sharp */
+          P0[N][0] = Pv[0];
+          P0[N][1] = Pv[1];
+          N++;
+          continue;
+        }
+        if (Ra * 2 > La) {
+          Ra = La / 2;
+        }
+        if (Rb * 2 > Lb) {
+          Rb = Lb / 2;
+        }
+        In0  = Pv[0] + Ax * 1000 / La * Ra / 1000;
+        In1  = Pv[1] + Ay * 1000 / La * Ra / 1000;
+        Out0 = Pv[0] + Bx * 1000 / Lb * Rb / 1000;
+        Out1 = Pv[1] + By * 1000 / Lb * Rb / 1000;
+        P0[N][0] = In0;
+        P0[N][1] = In1;
         N++;
-        if (Sharp) {
-          P0[N][0] = Base[I][0];
-          P0[N][1] = Base[I][1];
+        for (T = 2; T <= 6; T += 2) {
+          INTN  W0 = (8 - T) * (8 - T);
+          INTN  W1 = 2 * T * (8 - T);
+          INTN  W2 = T * T;
+
+          P0[N][0] = (INT32)((W0 * In0 + W1 * Pv[0] + W2 * Out0) / 64);
+          P0[N][1] = (INT32)((W0 * In1 + W1 * Pv[1] + W2 * Out1) / 64);
           N++;
         }
-      }
-      for (Iter = 0; Iter < 2; Iter++) {
-        for (K = 0; K < N; K++) {
-          INTN  NextK = (K + 1) % N;
-          P1[K * 2][0]     = (3 * P0[K][0] + P0[NextK][0]) / 4;
-          P1[K * 2][1]     = (3 * P0[K][1] + P0[NextK][1]) / 4;
-          P1[K * 2 + 1][0] = (P0[K][0] + 3 * P0[NextK][0]) / 4;
-          P1[K * 2 + 1][1] = (P0[K][1] + 3 * P0[NextK][1]) / 4;
-        }
-        N *= 2;
-        for (K = 0; K < N; K++) {
-          P0[K][0] = P1[K][0];
-          P0[K][1] = P1[K][1];
-        }
+        P0[N][0] = Out0;
+        P0[N][1] = Out1;
+        N++;
       }
       GfxPolyFill (P0, (UINTN)N, COL_ORANGE);
 
