@@ -823,6 +823,37 @@ AddOption (
   O->Label = ModelGetString (Fs, O->LabelId);
 }
 
+/*
+ * Insyde H2O legacy quirk: its ONE_OF_OPTION payload does not place the
+ * Value at the offset the standard layouts use, so every option parses
+ * as 0 (field log: stored 3, 5 options, values 0,0).  The vendor's
+ * option sets are plain enums listed in order (0,1,2...), so when all
+ * parsed values collide at 0 and there are at least three options,
+ * number them in publication order.
+ */
+STATIC
+VOID
+FixupOneof (
+  IN STMT  *S
+  )
+{
+  UINTN  I;
+  UINTN  W = S->Width != 0 ? S->Width : 1;
+  UINT64 Mask = W >= 8 ? 0 : (((UINT64)1 << (8 * W)) - 1);
+
+  if ((S->Kind != ST_ONEOF) || (S->OptionCount < 3)) {
+    return;
+  }
+  for (I = 0; I < S->OptionCount; I++) {
+    if ((S->Options[I].Value & Mask) != 0) {
+      return;
+    }
+  }
+  for (I = 1; I < S->OptionCount; I++) {
+    S->Options[I].Value = I;
+  }
+}
+
 STATIC
 VOID
 ParseIfr (
@@ -1009,7 +1040,9 @@ ParseIfr (
     if (H->OpCode == EFI_IFR_END_OP && (Depth > 0)) {
       Depth--;
       switch (Stack[Depth].Kind) {
-        case SCOPE_QUESTION: St   = NULL; break;
+        case SCOPE_QUESTION: FixupOneof (Stack[Depth].Stmt);
+                             St   = NULL;
+                             break;
         case SCOPE_FORM:     Form = Stack[Depth].Fs ? Stack[Depth].Form : NULL;
                              St   = NULL;
                              break;
