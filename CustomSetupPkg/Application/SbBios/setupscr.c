@@ -1846,7 +1846,7 @@ SetupSessionRunner (
     if (Type == EV_MOVE) {
       InputGetCursor (&CursorX, &CursorY);
       GfxSetCursor (CursorX, CursorY, TRUE);
-      GfxPresent ();
+      GfxPresentCursor ();
       continue;
     }
 

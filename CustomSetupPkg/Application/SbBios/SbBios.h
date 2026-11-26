@@ -110,6 +110,7 @@ VOID       GfxPencilCorners (INT32 X, INT32 Y, INT32 W, INT32 H, INT32 Arm,
 VOID       GfxSetCursor (INT32 X, INT32 Y, BOOLEAN Visible);
 EFI_STATUS GfxPresent (VOID);
 VOID       GfxReapplyMode (VOID);
+EFI_STATUS GfxPresentCursor (VOID);
 EFI_STATUS GfxStepMode (INTN Direction);
 EFI_STATUS GfxScreenshot (CHAR16 *Result, UINTN ResultChars);  /* BMP to FAT */
 

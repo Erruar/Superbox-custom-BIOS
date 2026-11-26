@@ -181,6 +181,33 @@ BootLabel (
   IN  UINTN   LabelChars
   )
 {
+  UINTN  Pos;
+  UINTN  Idx;
+
+  Label[0] = 0;
+  /* Standard UEFI EFI_LOAD_OPTION: Attributes(4) + FilePathListLength(2) + CHAR16 Description[] */
+  if (Size > 8) {
+    Pos = 6;
+    Idx = 0;
+    while ((Pos + 1 < Size) && (Idx + 1 < LabelChars)) {
+      CHAR16  Ch = (CHAR16)(Data[Pos] | (Data[Pos + 1] << 8));
+      if (Ch == 0) {
+        if (Idx > 0) {
+          Label[Idx] = 0;
+          return;
+        }
+        break;
+      }
+      if ((Ch < 0x20) || (Ch > 0x24FF)) {
+        Idx = 0;
+        break;
+      }
+      Label[Idx++] = Ch;
+      Pos += 2;
+    }
+    Label[0] = 0;
+  }
+
   if (BootLabelAt (Data, Size, 8, Label, LabelChars)) {
     return;
   }
@@ -239,15 +266,45 @@ CollectEntries (
   UINTN   Size;
 
   mEntryCount = 0;
-  for (Num = 0; Num < 0x100; Num++) {
-    UnicodeSPrint (Name, sizeof (Name), L"Boot%04x", Num);
-    if (!EFI_ERROR (ReadGlobalVar (Name, &Data, &Size))) {
-      if (mEntryCount < MAX_ENTRIES) {
+  if (!EFI_ERROR (ReadGlobalVar (L"BootOrder", &Data, &Size)) && (Size >= sizeof (UINT16))) {
+    UINTN   OrderCount = Size / sizeof (UINT16);
+    UINT16  *Order     = (UINT16 *)Data;
+
+    for (I = 0; I < OrderCount && mEntryCount < MAX_ENTRIES; I++) {
+      UINT8  *OptData = NULL;
+      UINTN   OptSize = 0;
+
+      Num = Order[I];
+      UnicodeSPrint (Name, sizeof (Name), L"Boot%04X", Num);
+      if (!EFI_ERROR (ReadGlobalVar (Name, &OptData, &OptSize))) {
         mEntries[mEntryCount].Num = Num;
-        BootLabel (Data, Size, mEntries[mEntryCount].Label, 64);
+        BootLabel (OptData, OptSize, mEntries[mEntryCount].Label, 64);
         SbLog ("[boot] lbl", Num, mEntries[mEntryCount].Label[0]);
         mEntryCount++;
+        FreePool (OptData);
       }
+    }
+    FreePool (Data);
+  }
+
+  for (Num = 0; Num < 0x100 && mEntryCount < MAX_ENTRIES; Num++) {
+    BOOLEAN  Seen = FALSE;
+
+    for (I = 0; I < mEntryCount; I++) {
+      if (mEntries[I].Num == Num) {
+        Seen = TRUE;
+        break;
+      }
+    }
+    if (Seen) {
+      continue;
+    }
+    UnicodeSPrint (Name, sizeof (Name), L"Boot%04X", Num);
+    if (!EFI_ERROR (ReadGlobalVar (Name, &Data, &Size))) {
+      mEntries[mEntryCount].Num = Num;
+      BootLabel (Data, Size, mEntries[mEntryCount].Label, 64);
+      SbLog ("[boot] lbl", Num, mEntries[mEntryCount].Label[0]);
+      mEntryCount++;
       FreePool (Data);
     }
   }
@@ -300,6 +357,45 @@ BootTo (
     SaveLastVar (L"SbBootPrev", PrevLabel, PrevNum);
   }
   SaveLastVar (L"SbBootLast", Label, Num);
+
+  /* Try direct LoadImage + StartImage from Boot#### DevicePath first. */
+  {
+    CHAR16  Name[10];
+    UINT8   *Data = NULL;
+    UINTN   Size  = 0;
+
+    UnicodeSPrint (Name, sizeof (Name), L"Boot%04X", Num);
+    if (!EFI_ERROR (ReadGlobalVar (Name, &Data, &Size)) && (Size > 8)) {
+      UINT16  FpLen = (UINT16)(Data[4] | (Data[5] << 8));
+      UINTN   Pos   = 6;
+
+      while (Pos + 1 < Size) {
+        UINT16  Ch = (UINT16)(Data[Pos] | (Data[Pos + 1] << 8));
+        Pos += 2;
+        if (Ch == 0) {
+          break;
+        }
+      }
+      if ((FpLen >= 4) && (Pos + FpLen <= Size)) {
+        EFI_DEVICE_PATH_PROTOCOL  *Dp    = (EFI_DEVICE_PATH_PROTOCOL *)(Data + Pos);
+        EFI_HANDLE                Child  = NULL;
+        EFI_STATUS                St;
+
+        St = gBS->LoadImage (FALSE, gImageHandle, Dp, NULL, 0, &Child);
+        SbLog ("[boot] loadimg", Num, (UINTN)St);
+        if (!EFI_ERROR (St)) {
+          St = gBS->StartImage (Child, NULL, NULL);
+          SbLog ("[boot] startimg", Num, (UINTN)St);
+          GfxReapplyMode ();
+          FreePool (Data);
+          if (!EFI_ERROR (St)) {
+            return;
+          }
+        }
+      }
+      FreePool (Data);
+    }
+  }
 
   gRT->SetVariable (L"BootNext", &gEfiGlobalVariableGuid, ATTR_NV,
                     sizeof (Next), &Next);
@@ -464,11 +560,13 @@ BootDraw (
 
   /* card block: hand-drawn corner brackets, thin pencil stroke */
   {
-    INT32  Bx = Xc - 10, By = Y0 - 10;
-    INT32  Bw = Wc + 20, Bh = ITEMS * Ch + (ITEMS - 1) * Gap + 20;
+    INT32  Ui = GfxUi ();
+    INT32  Pad = 10 * Ui;
+    INT32  Bx = Xc - Pad, By = Y0 - Pad;
+    INT32  Bw = Wc + Pad * 2, Bh = ITEMS * Ch + (ITEMS - 1) * Gap + Pad * 2;
 
-    GfxPencilCorners (Bx, By, Bw, Bh, 16, 1, (UINT32)(Bx + By * 7),
-                      PC_ALL, COL_INK);
+    GfxPencilCorners (Bx, By, Bw, Bh, 16 * Ui, Ui >= 2 ? 2 : 1,
+                      (UINT32)(Bx + By * 7), PC_ALL, COL_INK);
   }
 
   Pre[0] = LBL_LAST;
@@ -484,43 +582,67 @@ BootDraw (
   mCardH = Ch;
   mCardGap = Gap;
 
-  for (I = 0; I < ITEMS; I++) {
-    Y = Y0 + I * (Ch + Gap);
-    GfxFill (Xc, Y, Wc, Ch, (UINTN)I == mSel ? COL_ORANGE : COL_CARD);
-    UnicodeSPrint (Line, sizeof (Line), L"%s%s", Pre[I], Val[I]);
-    GfxText (Xc + 14, Y + Ch / 2 + 9, FONT (SbMono24), Line, COL_WHITE, 1);
-  }
-
-  /* press to continue */
-  GfxText (Mar, H * 62 / 100, FONT (SbSyne34), PRESS_TXT, COL_INK, 1);
-
-  /* footer */
-  GfxText (Mar, H * 78 / 100, FONT (SbMono19), HINTS_TXT, COL_INK, 1);
-  GfxText (Mar, H * 86 / 100, FONT (SbMono19), SIGN_TXT, COL_INK, 1);
-
-  /* brand mark: the lightning polygon + power line */
   {
-    INTN  BoltX = W * 64 / 100;
-    INTN  BoltW = H * 36 / 100;
-    INTN  BoltH = H * 48 / 100;
-    INTN  Tw;
-    INT32 Pts[6][2];
-    INTN  Kx[6] = { 600, 100, 400, 250, 900, 550 };
-    INTN  Ky[6] = { 0, 500, 500, 1000, 400, 400 };
+    BOOLEAN  Hi = (GfxUi () >= 2);
+    INT32    CardAsc = Hi ? GfxAscent (FONTW (SbMono44)) : GfxAscent (FONTW (SbMono24));
+    INT32    PadX    = Hi ? 24 : 14;
 
-    for (I = 0; I < 6; I++) {
-      Pts[I][0] = BoltX + Kx[I] * BoltW / 1000;
-      Pts[I][1] = H * 8 / 100 + Ky[I] * BoltH / 1000;
+    for (I = 0; I < ITEMS; I++) {
+      Y = Y0 + I * (Ch + Gap);
+      GfxFill (Xc, Y, Wc, Ch, (UINTN)I == mSel ? COL_ORANGE : COL_CARD);
+      UnicodeSPrint (Line, sizeof (Line), L"%s%s", Pre[I], Val[I]);
+      if (Hi) {
+        GfxText (Xc + PadX, Y + (Ch + CardAsc) / 2, FONT (SbMono44), Line, COL_WHITE, 1);
+      } else {
+        GfxText (Xc + PadX, Y + (Ch + CardAsc) / 2, FONT (SbMono24), Line, COL_WHITE, 1);
+      }
     }
-    GfxPolyFill (Pts, 6, COL_ORANGE);
 
-    Tw = GfxTextW (FONTW (SbSyne26), POWER_TXT, 1);
-    GfxText (BoltX + BoltW / 2 - Tw / 2, H * 64 / 100, FONT (SbSyne26),
-             POWER_TXT, COL_INK, 1);
-  }
+    /* press to continue */
+    if (Hi) {
+      GfxText (Mar, H * 62 / 100, FONT (SbSyne64), PRESS_TXT, COL_INK, 1);
+      GfxText (Mar, H * 78 / 100, FONT (SbMono24), HINTS_TXT, COL_INK, 1);
+      GfxText (Mar, H * 86 / 100, FONT (SbMono24), SIGN_TXT, COL_INK, 1);
+    } else {
+      GfxText (Mar, H * 62 / 100, FONT (SbSyne34), PRESS_TXT, COL_INK, 1);
+      GfxText (Mar, H * 78 / 100, FONT (SbMono19), HINTS_TXT, COL_INK, 1);
+      GfxText (Mar, H * 86 / 100, FONT (SbMono19), SIGN_TXT, COL_INK, 1);
+    }
 
-  if (mStatusMsg[0] != 0) {
-    GfxText (Mar, H * 93 / 100, FONT (SbMono19), mStatusMsg, COL_CARD, 1);
+    /* brand mark: the lightning polygon + power line */
+    {
+      INTN  BoltX = W * 64 / 100;
+      INTN  BoltW = H * 36 / 100;
+      INTN  BoltH = H * 48 / 100;
+      INTN  Tw;
+      INT32 Pts[6][2];
+      INTN  Kx[6] = { 600, 100, 400, 250, 900, 550 };
+      INTN  Ky[6] = { 0, 500, 500, 1000, 400, 400 };
+
+      for (I = 0; I < 6; I++) {
+        Pts[I][0] = BoltX + Kx[I] * BoltW / 1000;
+        Pts[I][1] = H * 8 / 100 + Ky[I] * BoltH / 1000;
+      }
+      GfxPolyFill (Pts, 6, COL_ORANGE);
+
+      if (Hi) {
+        Tw = GfxTextW (FONTW (SbSyne34), POWER_TXT, 1);
+        GfxText (BoltX + BoltW / 2 - Tw / 2, H * 64 / 100, FONT (SbSyne34),
+                 POWER_TXT, COL_INK, 1);
+      } else {
+        Tw = GfxTextW (FONTW (SbSyne26), POWER_TXT, 1);
+        GfxText (BoltX + BoltW / 2 - Tw / 2, H * 64 / 100, FONT (SbSyne26),
+                 POWER_TXT, COL_INK, 1);
+      }
+    }
+
+    if (mStatusMsg[0] != 0) {
+      if (Hi) {
+        GfxText (Mar, H * 93 / 100, FONT (SbMono24), mStatusMsg, COL_CARD, 1);
+      } else {
+        GfxText (Mar, H * 93 / 100, FONT (SbMono19), mStatusMsg, COL_CARD, 1);
+      }
+    }
   }
 }
 

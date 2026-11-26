@@ -67,7 +67,7 @@ SbBiosMain (
       /* cursor-only update: cheap present, no full redraw */
       InputGetCursor (&CursorX, &CursorY);
       GfxSetCursor (CursorX, CursorY, TRUE);
-      GfxPresent ();
+      GfxPresentCursor ();
       continue;
     }
 

@@ -105,7 +105,7 @@ MoveCursorRelative (
   IN INT32  CountsY
   )
 {
-  INT32  Scale = (INT32)GfxWidth () / (GfxWidth () >= 2560 ? 360 : 640);
+  INT32  Scale = (INT32)GfxWidth () / (GfxWidth () >= 2560 ? 480 : 640);
 
   if (Scale < 1) {
     Scale = 1;

@@ -23,6 +23,11 @@ STATIC CONST UINT8  mCursorShape[CURSOR_H] = {
 
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL  *mGop = NULL;
 STATIC UINT32                        mTargetMode = 0;
+STATIC INT32                         mLastCurX = 0;
+STATIC INT32                         mLastCurY = 0;
+STATIC INT32                         mLastCurW = 0;
+STATIC INT32                         mLastCurH = 0;
+STATIC BOOLEAN                       mHasLastCur = FALSE;
 STATIC UINT32                        *mBack = NULL;
 STATIC UINT32                        *mStage = NULL;      /* R/B swap copy  */
 STATIC UINTN                          mPitch = 0;
@@ -1010,7 +1015,87 @@ GfxPresent (
   }
 
   if (CurOn) {
+    mLastCurX   = mCursorX0;
+    mLastCurY   = mCursorY0;
+    mLastCurW   = mCursorW;
+    mLastCurH   = mCursorH;
+    mHasLastCur = TRUE;
     RestoreCursor ();
+  } else {
+    mHasLastCur = FALSE;
   }
   return Status;
+}
+
+STATIC
+VOID
+BltRect (
+  IN INT32  X,
+  IN INT32  Y,
+  IN INT32  W,
+  IN INT32  H
+  )
+{
+  INT32  X0 = X < 0 ? 0 : X;
+  INT32  Y0 = Y < 0 ? 0 : Y;
+  INT32  X1 = X + W;
+  INT32  Y1 = Y + H;
+
+  if (X1 > (INT32)mWidth) {
+    X1 = (INT32)mWidth;
+  }
+  if (Y1 > (INT32)mHeight) {
+    Y1 = (INT32)mHeight;
+  }
+  if ((X1 <= X0) || (Y1 <= Y0)) {
+    return;
+  }
+  mGop->Blt (
+          mGop,
+          (EFI_GRAPHICS_OUTPUT_BLT_PIXEL *)mBack,
+          EfiBltBufferToVideo,
+          (UINTN)X0, (UINTN)Y0,
+          (UINTN)X0, (UINTN)Y0,
+          (UINTN)(X1 - X0), (UINTN)(Y1 - Y0),
+          (UINTN)mPitch * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL)
+          );
+}
+
+EFI_STATUS
+GfxPresentCursor (
+  VOID
+  )
+{
+  BOOLEAN  CurOn = FALSE;
+
+  if ((mGop == NULL) || (mBack == NULL)) {
+    return EFI_NOT_READY;
+  }
+
+  if (mHasLastCur) {
+    BltRect (mLastCurX, mLastCurY, mLastCurW, mLastCurH);
+    mHasLastCur = FALSE;
+  }
+
+  if (mCurVisible) {
+    mCursorS = mUi;
+    if ((CURSOR_W * mCursorS) * (CURSOR_H * mCursorS) <=
+        (INT32)(sizeof (mCursorSave) / sizeof (mCursorSave[0]))) {
+      SaveCursor ();
+      DrawCursor ();
+      CurOn = TRUE;
+    }
+  }
+
+  if (CurOn) {
+    BltRect (mCursorX0, mCursorY0, mCursorW, mCursorH);
+    mLastCurX   = mCursorX0;
+    mLastCurY   = mCursorY0;
+    mLastCurW   = mCursorW;
+    mLastCurH   = mCursorH;
+    mHasLastCur = TRUE;
+    RestoreCursor ();
+  }
+
+  return EFI_SUCCESS;
 }
