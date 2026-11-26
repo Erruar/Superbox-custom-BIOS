@@ -1141,13 +1141,15 @@ DrawContent (
   }
 
   /* Help Info block: corner brackets only, bottom aligned with the
-   * Monitor box (both end at ContentBottom) */
+   * Monitor box (both end at ContentBottom).  Width CW+10*Sc puts its
+   * right edge exactly on the list box's right edge: all four right
+   * corner marks stack on one vertical. */
   {
     INT32  Hy = HelpTop ();
     INT32  Ty = Hy + (INT32)(14 * Sc) + A (SbSyne22);
 
     GfxPencilCorners (X - (INT32)(10 * Sc), Hy,
-                      CW + (INT32)(20 * Sc), ContentBottom () - Hy,
+                      CW + (INT32)(10 * Sc), ContentBottom () - Hy,
                       Arm, Pt, 0x5E12C0DEu, PC_ALL, COL_INK);
     T (SbSyne22, X, Ty, L"Help Info", COL_INK);
     if (mSel < mRowCount && mRows[mSel] != NULL &&
