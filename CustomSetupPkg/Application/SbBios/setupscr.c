@@ -1372,7 +1372,7 @@ DrawHelp (
   STATIC CONST CHAR16  *Lines[][2] = {
     { L"\x21C5",       L"navigate entries" },
     { L"Enter",        L"open / change" },
-    { L"\x2190 \x2192", L"step value" },
+    { L"< >",          L"step value" },
     { L"Tab",          L"next tab" },
     { L"Click",        L"pick, wheel scrolls" },
     { L"F1, Esc",      L"toggle this help" },
@@ -1412,7 +1412,7 @@ DrawHelp (
       if (N == 0) {
         break;
       }
-      Kx = GfxKeycap (Kx, Y, Tok,
+      Kx = GfxKeycap (Kx, Y + 2 * Sc, Tok,
                       FONTW_UI (SbMono16),
                       FONT_UI (SbMono16), FONT_UI (SbMono16),
                       5 * Sc, 2 * Sc, 3 * Sc, 1 * Sc, COL_CARD, COL_WHITE);
