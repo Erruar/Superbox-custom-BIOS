@@ -1606,6 +1606,14 @@ HandleKey (
   }
   if (K->ScanCode == SCAN_F12) {
     CHAR16  Name[48];
+    INT32   Sw;
+
+    /* the write takes seconds: show a busy note before it starts */
+    StrCpyS (mStatus, 128, L"saving screenshot...");
+    Sw = TW (SbMono16, mStatus);
+    T (SbMono16, (INT32)GfxWidth () - PADX () - Sw,
+       ContentTop () - (INT32)(14 * S ()), mStatus, COL_INK);
+    GfxPresent ();
 
     if (!EFI_ERROR (GfxScreenshot (Name, 48))) {
       UnicodeSPrint (mStatus, sizeof (mStatus), L"saved %s", Name);

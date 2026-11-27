@@ -859,10 +859,12 @@ GfxScreenshot (
 {
   EFI_STATUS        Status;
   UINTN             Index;
+  UINTN             WLen;
   UINT32            FileSize;
   UINTN             RowBytes;
   UINT8             Header[54];
   UINT8             *Row;
+  UINT8             *Buf;
   EFI_FILE_PROTOCOL *File = NULL;
   EFI_FILE_PROTOCOL *Root = NULL;
   CHAR16            Name[48];
@@ -910,26 +912,49 @@ GfxScreenshot (
   Header[25] = (UINT8)(mHeight >> 24);
   Header[26] = 1;                                    /* planes             */
   Header[28] = 24;                                   /* bpp                */
-  {
-    UINTN  HdrLen = sizeof (Header);
 
-    Status = File->Write (File, &HdrLen, Header);
-  }
-
-  /* BMP rows go bottom-up; back buffer is 0x00RRGGBB (already display order) */
-  if (!EFI_ERROR (Status)) {
+  /*
+   * Assembling the whole image in RAM and writing it in ONE File
+   * call is the difference between ~1 s and ~1 min on a USB stick:
+   * FatPkg answers every Write as its own cluster-chain transaction,
+   * so the old per-row loop paid 2160 round trips at 4K.  Only when
+   * the pool cannot take the file (~25 MB at 4K) fall back.
+   */
+  Buf = AllocatePool (FileSize);
+  if (Buf != NULL) {
+    CopyMem (Buf, Header, sizeof (Header));
     for (Index = 0; Index < mHeight; Index++) {
       UINT32  *Src = &mBack[(UINTN)(mHeight - 1 - Index) * mPitch];
+      UINT8   *Dst = Buf + 54 + (UINTN)Index * RowBytes;
       UINTN   X;
 
       for (X = 0; X < mWidth; X++) {
-        Row[X * 3 + 0] = (UINT8)(Src[X]);
-        Row[X * 3 + 1] = (UINT8)(Src[X] >> 8);
-        Row[X * 3 + 2] = (UINT8)(Src[X] >> 16);
+        Dst[X * 3 + 0] = (UINT8)(Src[X]);
+        Dst[X * 3 + 1] = (UINT8)(Src[X] >> 8);
+        Dst[X * 3 + 2] = (UINT8)(Src[X] >> 16);
       }
-      Status = File->Write (File, &RowBytes, Row);
-      if (EFI_ERROR (Status)) {
-        break;
+    }
+    WLen   = FileSize;
+    Status = File->Write (File, &WLen, Buf);
+    FreePool (Buf);
+  } else {
+    UINTN  HdrLen = sizeof (Header);
+
+    Status = File->Write (File, &HdrLen, Header);
+    if (!EFI_ERROR (Status)) {
+      for (Index = 0; Index < mHeight; Index++) {
+        UINT32  *Src = &mBack[(UINTN)(mHeight - 1 - Index) * mPitch];
+        UINTN   X;
+
+        for (X = 0; X < mWidth; X++) {
+          Row[X * 3 + 0] = (UINT8)(Src[X]);
+          Row[X * 3 + 1] = (UINT8)(Src[X] >> 8);
+          Row[X * 3 + 2] = (UINT8)(Src[X] >> 16);
+        }
+        Status = File->Write (File, &RowBytes, Row);
+        if (EFI_ERROR (Status)) {
+          break;
+        }
       }
     }
   }
