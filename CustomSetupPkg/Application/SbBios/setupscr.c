@@ -1221,11 +1221,11 @@ DrawFooter (
     }
     T (SbMono16, X, Base, Hints[I][0], COL_INK);
     X += Tw + 4 * Sc;
-    X = GfxKeycap (X, Base, Hints[I][1],
+    X = GfxKeycap (X, Base + 2 * Sc, Hints[I][1],
                    FONTW_UI (SbMono16),
                    FONT_UI (SbMono16), FONT_UI (SbMono16),
                    PadX, 4 * Sc, 4 * Sc, 2 * Sc, COL_CARD, COL_WHITE);
-    X += 18 * Sc;
+    X += 34 * Sc;
   }
 
   Sw = TW (SbMono16, Sign);
@@ -1365,22 +1365,22 @@ DrawHelp (
   INT32   Sc = S ();
   INT32   PanW = W * 44 / 100;
   INT32   PanX = (W - PanW) / 2;
-  INT32   PanH = (INT32)(15 * 22 * Sc);
+  INT32   PanH = (INT32)(15 * 26 * Sc);
   INT32   PanY = (H - PanH) / 2;
   INT32   Y;
   UINTN   I;
-  STATIC CONST CHAR16  *Lines[] = {
-    L"\x21C5      navigate entries",
-    L"Enter     open / change",
-    L"\x2190 \x2192  step value",
-    L"Tab       next tab",
-    L"Click     pick, wheel scrolls",
-    L"F1, Esc   toggle this help",
-    L"F7        boot menu",
-    L"F9        load defaults",
-    L"F10       save and reboot",
-    L"F12       screenshot to USB stick",
-    L"+ / -     video mode"
+  STATIC CONST CHAR16  *Lines[][2] = {
+    { L"\x21C5",       L"navigate entries" },
+    { L"Enter",        L"open / change" },
+    { L"\x2190 \x2192", L"step value" },
+    { L"Tab",          L"next tab" },
+    { L"Click",        L"pick, wheel scrolls" },
+    { L"F1, Esc",      L"toggle this help" },
+    { L"F7",           L"boot menu" },
+    { L"F9",           L"load defaults" },
+    { L"F10",          L"save and reboot" },
+    { L"F12",          L"screenshot to USB stick" },
+    { L"+ -",          L"video mode" }
   };
 
   Y = PanY + (INT32)(14 * Sc) + A (SbSyne22);   /* baseline below the corners */
@@ -1389,10 +1389,37 @@ DrawHelp (
                     Sc >= 2 ? 2 : 1, (UINT32)(PanX * 17 + PanY), PC_ALL,
                     COL_INK);
   T (SbSyne22, PanX + (INT32)(16 * Sc), Y, L"Hot keys", COL_INK);
-  Y += A (SbSyne22) + (INT32)(16 * Sc);
+  Y += A (SbSyne22) + (INT32)(20 * Sc);
   for (I = 0; I < sizeof (Lines) / sizeof (Lines[0]); I++) {
-    T (SbMono16, PanX + (INT32)(16 * Sc), Y, Lines[I], COL_INK);
-    Y += (INT32)(22 * Sc);
+    CONST CHAR16  *K = Lines[I][0];
+    INT32          Kx = PanX + (INT32)(16 * Sc);
+
+    /* one keycap per space-separated token, commas trimmed */
+    while (*K != 0) {
+      CHAR16  Tok[8];
+      UINTN   N = 0;
+
+      while (*K == L' ') {
+        K++;
+      }
+      while ((*K != 0) && (*K != L' ') && (N < sizeof (Tok) - 1)) {
+        Tok[N++] = *K++;
+      }
+      Tok[N] = 0;
+      if ((N > 1) && (Tok[N - 1] == L',')) {
+        Tok[--N] = 0;
+      }
+      if (N == 0) {
+        break;
+      }
+      Kx = GfxKeycap (Kx, Y, Tok,
+                      FONTW_UI (SbMono16),
+                      FONT_UI (SbMono16), FONT_UI (SbMono16),
+                      5 * Sc, 2 * Sc, 3 * Sc, 1 * Sc, COL_CARD, COL_WHITE);
+      Kx += (INT32)(5 * Sc);
+    }
+    T (SbMono16, PanX + (INT32)(120 * Sc), Y, Lines[I][1], COL_INK);
+    Y += (INT32)(26 * Sc);
   }
 }
 
