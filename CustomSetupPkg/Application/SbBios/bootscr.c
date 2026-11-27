@@ -47,6 +47,13 @@ STATIC UINTN    mSel = 0;
 STATIC BOOLEAN  mWantSetup = FALSE;
 STATIC CHAR16   mStatusMsg[96];
 
+/*
+ * Auto-clear the screenshot status: one sensor tick is ~2 s, so the
+ * saved-file line fades by itself and F12 can be pressed again.
+ */
+#define SHOT_STATUS_TICKS  1
+STATIC UINTN    mShotClear = 0;
+
 /* card geometry for mouse hit-testing (valid after BootDraw) */
 STATIC INT32    mCardX, mCardY0, mCardW, mCardH, mCardGap;
 
@@ -1018,6 +1025,7 @@ BootEnter (
 {
   mWantSetup = FALSE;
   mStatusMsg[0] = 0;
+  mShotClear = 0;
   CollectEntries ();
   BootDraw ();
 }
@@ -1028,6 +1036,7 @@ BootEvent (
   )
 {
   mStatusMsg[0] = 0;
+  mShotClear = 0;
 
   if (E->Type == EV_LCLICK) {
     INTN  Card = CardAt (E->X, E->Y);
@@ -1062,11 +1071,9 @@ BootEvent (
     case SCAN_F12: {
       CHAR16  Name[48];
 
-      /* the write takes seconds: show a busy note before it starts */
-      StrCpyS (mStatusMsg, 96, L"saving screenshot...");
-      BootDraw ();
       if (!EFI_ERROR (GfxScreenshot (Name, 48))) {
         UnicodeSPrint (mStatusMsg, 96, L"saved %s", Name);
+        mShotClear = SHOT_STATUS_TICKS;
       } else {
         StrCpyS (mStatusMsg, 96, L"no USB stick (3.7-120 GB) found");
       }
@@ -1097,4 +1104,21 @@ BootWantSetup (
   )
 {
   return mWantSetup;
+}
+
+/*
+ * Timed refresh while the main loop idles on the boot page: fade the
+ * screenshot status line once its ticks are spent (~2 s per tick).
+ */
+VOID
+BootTick (
+  VOID
+  )
+{
+  if (mShotClear != 0) {
+    if (--mShotClear == 0) {
+      mStatusMsg[0] = 0;
+      BootDraw ();
+    }
+  }
 }

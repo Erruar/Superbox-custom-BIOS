@@ -50,15 +50,17 @@ SbBiosMain (
 
     if (Type == EV_NONE) {
       gBS->Stall (FRAME_STALL_US);
-      if (Screen == SCR_SETUP) {
-        /* clock + sensors keep moving while nobody touches the box */
-        if (++Laps >= SENSOR_TICK_LAPS) {
-          Laps = 0;
+      if (++Laps >= SENSOR_TICK_LAPS) {
+        Laps = 0;
+        if (Screen == SCR_SETUP) {
+          /* clock + sensors keep moving while nobody touches the box */
           SetupTick ();
-          InputGetCursor (&CursorX, &CursorY);
-          GfxSetCursor (CursorX, CursorY, TRUE);
-          GfxPresent ();
+        } else {
+          BootTick ();
         }
+        InputGetCursor (&CursorX, &CursorY);
+        GfxSetCursor (CursorX, CursorY, TRUE);
+        GfxPresent ();
       }
       continue;
     }

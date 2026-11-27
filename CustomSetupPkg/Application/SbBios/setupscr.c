@@ -45,6 +45,14 @@ STATIC BOOLEAN     mHelp     = FALSE;      /* F1 overlay visible         */
 STATIC BOOLEAN     mWantBoot = FALSE;
 STATIC BOOLEAN     mWantReset = FALSE;
 STATIC CHAR16      mStatus[128];
+
+/*
+ * Auto-clear the screenshot status: the main loop idles one sensor
+ * tick (~2 s), then the saved-file line fades by itself, so F12 can
+ * be spammed for batch shots.
+ */
+#define SHOT_STATUS_TICKS  1
+STATIC UINTN       mShotClear = 0;
 STATIC HW_INFO     mHw;
 STATIC UINTN       mHwMinute = 0xFFFFFFFF;
 STATIC EFI_STATUS  mModelStatus = EFI_NOT_STARTED;
@@ -1478,6 +1486,13 @@ SetupTick (
     GfxFill (0, 0, CONTENT_X () - (INT32)(40 * Sc), (INT32)GfxHeight (), COL_BG);
   }
   DrawLeft ();
+
+  if (mShotClear != 0) {
+    if (--mShotClear == 0 && mStatus[0] != 0) {
+      mStatus[0] = 0;
+      SetupDraw ();
+    }
+  }
 }
 
 /* --------------------------------------------------------------- events */
@@ -1606,17 +1621,10 @@ HandleKey (
   }
   if (K->ScanCode == SCAN_F12) {
     CHAR16  Name[48];
-    INT32   Sw;
-
-    /* the write takes seconds: show a busy note before it starts */
-    StrCpyS (mStatus, 128, L"saving screenshot...");
-    Sw = TW (SbMono16, mStatus);
-    T (SbMono16, (INT32)GfxWidth () - PADX () - Sw,
-       ContentTop () - (INT32)(14 * S ()), mStatus, COL_INK);
-    GfxPresent ();
 
     if (!EFI_ERROR (GfxScreenshot (Name, 48))) {
       UnicodeSPrint (mStatus, sizeof (mStatus), L"saved %s", Name);
+      mShotClear = SHOT_STATUS_TICKS;
     } else {
       StrCpyS (mStatus, 128, L"no USB stick (3.7-120 GB) found");
     }

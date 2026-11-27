@@ -268,6 +268,7 @@ VOID HwUpdate (HW_INFO *Hw);   /* refresh time (per second) + sensors */
 VOID BootEnter (VOID);                       /* collect entries, draw */
 VOID BootEvent (INPUT_EVENT *Event);         /* returns, may switch  */
 VOID BootDraw (VOID);
+VOID BootTick (VOID);                        /* timed status clear    */
 BOOLEAN BootWantSetup (VOID);                /* F10 pressed */
 
 /* setup viewer (screen 1) */
