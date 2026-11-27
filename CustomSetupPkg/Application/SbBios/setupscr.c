@@ -809,11 +809,16 @@ DrawTabIcon (
 
   switch (Kind) {
     case L'M':  /* home: roof triangle + body square */
-      Pts[0][0] = Cx - R - S; Pts[0][1] = Cy - S;
-      Pts[1][0] = Cx;         Pts[1][1] = Cy - R - 2 * S;
-      Pts[2][0] = Cx + R + S; Pts[2][1] = Cy - S;
+      /*
+       * The roof apex reaches 7*S over the chip center while the body
+       * only drops 2*S below it, so the mark reads top-heavy.  Sink the
+       * whole glyph 2*S: the mass then sits centered in the chip.
+       */
+      Pts[0][0] = Cx - R - S; Pts[0][1] = Cy + S;
+      Pts[1][0] = Cx;         Pts[1][1] = Cy - R;
+      Pts[2][0] = Cx + R + S; Pts[2][1] = Cy + S;
       GfxPolyFill (Pts, 3, Color);
-      GfxFill (Cx - R + S, Cy - S, 2 * R - 2 * S, 3 * S, Color);
+      GfxFill (Cx - R + S, Cy + S, 2 * R - 2 * S, 3 * S, Color);
       break;
     case L'A':  /* square */
       GfxFill (Cx - R, Cy - R, 2 * R + S, 2 * R + S, Color);
@@ -882,7 +887,8 @@ DrawTabs (
     GfxFill (X, mTabY, SlotW, mTabH, (F == mFs) ? COL_ORANGE : COL_CARD);
     DrawTabIcon (X + (INT32)(6 * Sc), mTabY, Title[0], COL_WHITE);
     T (SbSyne16, X + Icon + (INT32)(4 * Sc),
-       mTabY + (mTabH + A (SbSyne16)) / 2, Label, COL_WHITE);
+       mTabY + (mTabH + A (SbSyne16)) / 2 - (INT32)(2 * Sc), Label,
+       COL_WHITE);
     X += SlotW + Gap;
   }
 
@@ -898,7 +904,8 @@ DrawTabs (
     GfxFill (X, mTabY, SlotW, mTabH, COL_CARD);
     GfxCircle (X + Icon / 2, mTabY + mTabH / 2, 5 * Sc, COL_WHITE, TRUE);
     T (SbSyne16, X + Icon + (INT32)(4 * Sc),
-       mTabY + (mTabH + A (SbSyne16)) / 2, Title, COL_WHITE);
+       mTabY + (mTabH + A (SbSyne16)) / 2 - (INT32)(2 * Sc), Title,
+       COL_WHITE);
   }
 }
 
