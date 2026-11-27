@@ -207,6 +207,14 @@ GpuDiag (
     LogFmt ("  gpu %04x:%04x command 0x%08x (mem-enable %u)",
             Id & 0xFFFF, Id >> 16, Cmd, (Cmd & BIT1) ? 1 : 0);
 
+    /* raw config-space BARs: ground truth next to the PciIo resources */
+    for (Bar = 0; Bar < 6; Bar++) {
+      UINT32  Raw = 0;
+
+      Pci->Pci.Read (Pci, EfiPciIoWidthUint32, 0x10 + Bar * 4, 1, &Raw);
+      LogFmt ("  gpu cfg bar%u: 0x%08x", Bar, Raw);
+    }
+
     /*
      * PciIo BarIndex numbers resources, so a 64-bit BAR0 eats one index
      * and the rest shift: the register window here is BarIndex 3, not
@@ -225,15 +233,22 @@ GpuDiag (
       {
         EFI_ACPI_ADDRESS_SPACE_DESCRIPTOR  *D = Res;
 
-        LogFmt ("  gpu bar%u: %a base 0x%lx len 0x%lx", Bar,
-                (D->ResType == ACPI_ADDRESS_SPACE_TYPE_MEM) ? "mem" :
-                (D->ResType == ACPI_ADDRESS_SPACE_TYPE_IO)  ? "io"  : "bus",
-                D->AddrRangeMin, D->AddrLen);
-        if ((D->ResType == ACPI_ADDRESS_SPACE_TYPE_MEM) &&
-            (D->AddrLen >= 0x1000) && (D->AddrLen <= 0x100000)) {
-          RegBar = (UINT8)Bar;
-          RegLen = D->AddrLen;
-          LogFmt ("  gpu: register window is bar%u", RegBar);
+        if (D->ResType > ACPI_ADDRESS_SPACE_TYPE_IO) {
+          /* ROM / card-bus descriptors keep unrelated data in the
+           * address fields: name them, never print those as addresses */
+          LogFmt ("  gpu bar%u: type %u (not mem/io, skipped)",
+                  Bar, D->ResType);
+        } else {
+          LogFmt ("  gpu bar%u: %a base 0x%lx len 0x%lx", Bar,
+                  (D->ResType == ACPI_ADDRESS_SPACE_TYPE_MEM) ? "mem"
+                                                              : "io",
+                  D->AddrRangeMin, D->AddrLen);
+          if ((D->ResType == ACPI_ADDRESS_SPACE_TYPE_MEM) &&
+              (D->AddrLen >= 0x1000) && (D->AddrLen <= 0x100000)) {
+            RegBar = (UINT8)Bar;
+            RegLen = D->AddrLen;
+            LogFmt ("  gpu: register window is bar%u", RegBar);
+          }
         }
       }
       FreePool (Res);
@@ -243,8 +258,14 @@ GpuDiag (
       if ((0x5428 + 4) <= RegLen) {
         if (!EFI_ERROR (Pci->Mem.Read (Pci, EfiPciIoWidthUint32, RegBar,
                                        0x5428, 1, &MemSize))) {
-          LogFmt ("  gpu CONFIG_MEMSIZE 0x%08x = %u MiB",
-                  MemSize, (MemSize >> 12) & 0x3F);
+          /*
+           * CIK layout: bits 21:12 size in MiB, bits 11:8 aperture as
+           * 2^n * 64 MB.  This GPU reports size 0 with aperture 2^2 =
+           * 256 MB (matching BAR0) on BOTH boots: the memory window is
+           * identical cold and warm, so it cannot be the mode filter.
+           */
+          LogFmt ("  gpu CONFIG_MEMSIZE 0x%08x (%u MiB, aperture 2^%u x 64MB)",
+                  MemSize, (MemSize >> 12) & 0x3F, (MemSize >> 8) & 0xF);
         } else {
           LogFmt ("  gpu CONFIG_MEMSIZE read failed (bar%u)", RegBar);
         }
