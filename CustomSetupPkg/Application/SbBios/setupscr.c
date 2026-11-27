@@ -964,6 +964,13 @@ DrawTabs (
   if (Slots < 1) {
     Slots = 1;
   }
+  /*
+   * Pull the row's right end in from the frame: the corner bracket's
+   * vertical stroke stands 10*Sc past the box edge, and a chip ending
+   * flush with that edge reads as touching the ink (the left side is
+   * fine because the chips start at the box line, not at the corner).
+   */
+  Avail -= (INT32)(6 * Sc);
   SlotW = (Avail - (Slots - 1) * Gap) / Slots;
   if (SlotW < Icon + (INT32)(20 * Sc)) {
     SlotW = Icon + (INT32)(20 * Sc);   /* tiny sliver: labels clip out */
