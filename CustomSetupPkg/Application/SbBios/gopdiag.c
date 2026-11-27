@@ -190,6 +190,8 @@ GpuDiag (
     EFI_PCI_IO_PROTOCOL  *Pci = NULL;
     UINT32               Id = 0, Cmd = 0, MemSize = 0;
     UINT8                Class[3];
+    UINT8                RegBar = 0xFF;
+    UINT64               RegLen = 0;
 
     if (EFI_ERROR (gBS->HandleProtocol (Handles[Index], &gEfiPciIoProtocolGuid,
                                         (VOID **)&Pci)) || (Pci == NULL)) {
@@ -205,11 +207,19 @@ GpuDiag (
     LogFmt ("  gpu %04x:%04x command 0x%08x (mem-enable %u)",
             Id & 0xFFFF, Id >> 16, Cmd, (Cmd & BIT1) ? 1 : 0);
 
+    /*
+     * PciIo BarIndex numbers resources, so a 64-bit BAR0 eats one index
+     * and the rest shift: the register window here is BarIndex 3, not
+     * the BAR4 of the config space.  Find it by size (the sub-1 MB mem
+     * bar, 0xF0B00000/256K on this GPU) instead of hardcoding.
+     */
     for (Bar = 0; Bar < 6; Bar++) {
-      VOID  *Res = NULL;
+      VOID        *Res = NULL;
+      EFI_STATUS  St;
 
-      if (EFI_ERROR (Pci->GetBarAttributes (Pci, (UINT8)Bar, NULL, &Res)) ||
-          (Res == NULL)) {
+      St = Pci->GetBarAttributes (Pci, (UINT8)Bar, NULL, &Res);
+      if (EFI_ERROR (St) || (Res == NULL)) {
+        LogFmt ("  gpu bar%u: no resource (%r)", Bar, St);
         continue;
       }
       {
@@ -219,16 +229,31 @@ GpuDiag (
                 (D->ResType == ACPI_ADDRESS_SPACE_TYPE_MEM) ? "mem" :
                 (D->ResType == ACPI_ADDRESS_SPACE_TYPE_IO)  ? "io"  : "bus",
                 D->AddrRangeMin, D->AddrLen);
+        if ((D->ResType == ACPI_ADDRESS_SPACE_TYPE_MEM) &&
+            (D->AddrLen >= 0x1000) && (D->AddrLen <= 0x100000)) {
+          RegBar = (UINT8)Bar;
+          RegLen = D->AddrLen;
+          LogFmt ("  gpu: register window is bar%u", RegBar);
+        }
       }
       FreePool (Res);
     }
 
-    if (!EFI_ERROR (Pci->Mem.Read (Pci, EfiPciIoWidthUint32, 5, 0x5428,
-                                   1, &MemSize))) {
-      LogFmt ("  gpu CONFIG_MEMSIZE 0x%08x = %u MiB",
-              MemSize, (MemSize >> 12) & 0x3F);
+    if (RegBar != 0xFF) {
+      if ((0x5428 + 4) <= RegLen) {
+        if (!EFI_ERROR (Pci->Mem.Read (Pci, EfiPciIoWidthUint32, RegBar,
+                                       0x5428, 1, &MemSize))) {
+          LogFmt ("  gpu CONFIG_MEMSIZE 0x%08x = %u MiB",
+                  MemSize, (MemSize >> 12) & 0x3F);
+        } else {
+          LogFmt ("  gpu CONFIG_MEMSIZE read failed (bar%u)", RegBar);
+        }
+      } else {
+        LogFmt ("  gpu: register window bar%u too small (0x%lx)",
+                RegBar, RegLen);
+      }
     } else {
-      LogFmt ("  gpu CONFIG_MEMSIZE read failed");
+      LogFmt ("  gpu: no register-window bar found");
     }
   }
   FreePool (Handles);
