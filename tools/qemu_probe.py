@@ -15,12 +15,23 @@ Usage examples:
   py tools/qemu_probe.py serial
 """
 import json
+import os
 import socket
 import sys
 import time
 from pathlib import Path
 
 HOST, PORT = "127.0.0.1", 4545
+
+# Screenshots are test artifacts, never repository content (UI captures can
+# show serials and other machine-specific data): every dump goes to the
+# scratch directory, keeping only the requested file name.
+DUMP_DIR = Path(os.environ.get("TEMP", "/tmp")) / "opencode"
+
+
+def dump_path(name: str) -> str:
+    DUMP_DIR.mkdir(parents=True, exist_ok=True)
+    return str(DUMP_DIR / Path(name).name)
 
 
 class Qmp:
@@ -204,7 +215,7 @@ def main():
     q = Qmp()
 
     if args[0] == "dump":
-        out = str(Path(args[1]).resolve()) if len(args) > 1 else "screen.ppm"
+        out = dump_path(args[1] if len(args) > 1 else "screen.ppm")
         q.screendump(out)
         print("wrote", out)
     elif args[0] == "text":

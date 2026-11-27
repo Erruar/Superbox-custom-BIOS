@@ -4,15 +4,20 @@
 /proprietary tools
 /plans
 
-# Прошивки: содержат серийники и ключы Windows — не коммитим
+# Firmwares: serials and Windows keys — do not commit
 /bios-dumps
 *.fd
 *.rom
 *.bin
 
-# Внешние тулчейны и артефакты сборки
+# Other toolchains and artifacts
 /vendor
 /edk2-workspace
 /build
 __pycache__/
 *.pyc
+
+# Test UI Screenshots: there can be serial numbers and machine data — do not commit
+*.ppm
+*.png
+*.jpg
