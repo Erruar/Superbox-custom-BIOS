@@ -165,8 +165,8 @@ GopDiag (
 
   for (Index = 0; !EFI_ERROR (Status) && (Index < Count); Index++) {
     EFI_GRAPHICS_OUTPUT_PROTOCOL  *Gop = NULL;
-    EDID_DISCOVERED_PROTOCOL      *Disc = NULL;
-    EDID_ACTIVE_PROTOCOL          *Act  = NULL;
+    EFI_EDID_DISCOVERED_PROTOCOL    *Disc = NULL;
+    EFI_EDID_ACTIVE_PROTOCOL        *Act  = NULL;
 
     LogFmt ("  [%u] handle %p", Index, Handles[Index]);
     DumpPath (Handles[Index]);
@@ -208,7 +208,7 @@ GopDiag (
                                      NULL, &Count, &Handles);
   LogFmt ("EdidDiscovered handles: %u (%r)", Count, Status);
   for (Index = 0; !EFI_ERROR (Status) && (Index < Count); Index++) {
-    EDID_DISCOVERED_PROTOCOL  *Disc = NULL;
+    EFI_EDID_DISCOVERED_PROTOCOL  *Disc = NULL;
 
     LogFmt ("  edid owner %p", Handles[Index]);
     DumpPath (Handles[Index]);
