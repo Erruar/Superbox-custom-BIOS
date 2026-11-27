@@ -11,6 +11,7 @@
   fontdata.h
   main.c
   gfx.c
+  gopdiag.c
   input.c
   log.c
   model.c
@@ -41,6 +42,8 @@
 
 [Protocols]
   gEfiGraphicsOutputProtocolGuid            ## CONSUMES
+  gEfiEdidDiscoveredProtocolGuid            ## CONSUMES
+  gEfiEdidActiveProtocolGuid                ## CONSUMES
   gEfiHiiDatabaseProtocolGuid               ## CONSUMES
   gEfiHiiStringProtocolGuid                 ## CONSUMES
   gEfiHiiConfigRoutingProtocolGuid          ## CONSUMES

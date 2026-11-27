@@ -33,12 +33,14 @@ SbBiosMain (
   SbLogInit ();
   SbLog ("[sbios] enter", 0, 0);
 
+  GopDiag ("before GfxInit");
   Status = GfxInit ();
   if (EFI_ERROR (Status)) {
     Print (L"SbBios: no usable graphics output (%r)\n", Status);
     return Status;
   }
 
+  GopDiag ("after GfxInit");
   InputInit ();
   BootEnter ();
   InputGetCursor (&CursorX, &CursorY);

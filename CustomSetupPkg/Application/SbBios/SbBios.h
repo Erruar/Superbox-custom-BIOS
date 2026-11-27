@@ -66,6 +66,8 @@ VOID       SbLog6 (IN CONST CHAR8  *Tag, IN UINTN V1, IN UINTN V2,
 
 /* --------------------------------------------------------------------- gfx */
 
+VOID       GopDiag (IN CONST CHAR8  *Tag);
+VOID       GopDiagReconnect (VOID);
 EFI_STATUS GfxInit (VOID);
 VOID       GfxExit (VOID);
 UINT32     GfxWidth (VOID);
