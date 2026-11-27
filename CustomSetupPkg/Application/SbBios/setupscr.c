@@ -1197,25 +1197,39 @@ DrawFooter (
   INT32   Y = FooterTop ();
   INT32   X = CONTENT_X ();
   UINTN   I;
-  STATIC CONST CHAR16  *Hints[] = {
-    L"General Help (F1)", L"Boot Menu (F7)", L"Print Screen (F12)",
-    L"Load Defaults (F9)", L"Save and Exit (F10)"
+  STATIC CONST CHAR16  *Hints[][2] = {
+    { L"General Help",  L"F1"  },
+    { L"Boot Menu",     L"F7"  },
+    { L"Print Screen",  L"F12" },
+    { L"Load Defaults", L"F9"  },
+    { L"Save and Exit", L"F10" },
   };
   CONST CHAR16  *Sign = L"2026 @Serzhik Saku, Insyde Corp.";
   INT32         Sw;
+  INT32         Base = Y + A (SbMono16);
 
   for (I = 0; I < sizeof (Hints) / sizeof (Hints[0]); I++) {
-    INT32  Tw = TW (SbMono16, Hints[I]);
+    INT32  Tw   = TW (SbMono16, Hints[I][0]);
+    INT32  PadX = 6 * Sc;
+    INT32  CapW = GfxTextW (FONTW_UI (SbMono16), Hints[I][1], 1) + 2 * PadX;
 
-    if (X + Tw > W - PADX ()) {
+    if (CapW < A (SbMono16) + 8 * Sc) {
+      CapW = A (SbMono16) + 8 * Sc;
+    }
+    if (X + Tw + 4 * Sc + CapW > W - PADX ()) {
       break;
     }
-    T (SbMono16, X, Y + A (SbMono16), Hints[I], COL_INK);
-    X += Tw + (INT32)(28 * Sc);
+    T (SbMono16, X, Base, Hints[I][0], COL_INK);
+    X += Tw + 4 * Sc;
+    X = GfxKeycap (X, Base, Hints[I][1],
+                   FONTW_UI (SbMono16),
+                   FONT_UI (SbMono16), FONT_UI (SbMono16),
+                   PadX, 4 * Sc, 4 * Sc, 2 * Sc, COL_CARD, COL_WHITE);
+    X += 18 * Sc;
   }
 
   Sw = TW (SbMono16, Sign);
-  T (SbMono16, (W - Sw) / 2, Y + A (SbMono16) + (INT32)(22 * Sc), Sign,
+  T (SbMono16, (W - Sw) / 2, Base + (INT32)(22 * Sc), Sign,
      COL_INK);
   (void)H;
 }

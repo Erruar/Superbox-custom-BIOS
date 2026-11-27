@@ -367,35 +367,6 @@ IntSqrt (
 }
 
 STATIC
-VOID
-DrawRoundBox (
-  IN INT32   X,
-  IN INT32   Y,
-  IN INT32   W,
-  IN INT32   H,
-  IN INT32   R,
-  IN UINT32  Color
-  )
-{
-  if (R * 2 > W) {
-    R = W / 2;
-  }
-  if (R * 2 > H) {
-    R = H / 2;
-  }
-  if (R <= 0) {
-    GfxFill (X, Y, W, H, Color);
-    return;
-  }
-  GfxFill (X + R, Y, W - 2 * R, H, Color);
-  GfxFill (X, Y + R, W, H - 2 * R, Color);
-  GfxCircle (X + R, Y + R, R, Color, TRUE);
-  GfxCircle (X + W - R - 1, Y + R, R, Color, TRUE);
-  GfxCircle (X + R, Y + H - R - 1, R, Color, TRUE);
-  GfxCircle (X + W - R - 1, Y + H - R - 1, R, Color, TRUE);
-}
-
-STATIC
 INT32
 DrawKeycap (
   IN INT32         X,
@@ -405,51 +376,33 @@ DrawKeycap (
   IN BOOLEAN       UseSyneIcon
   )
 {
-  INT32  Asc  = Hi ? GfxAscent (FONTW (SbSyne34)) : GfxAscent (FONTW (SbMono19));
-  INT32  Kw   = Hi ? GfxTextW (FONTW (SbSyne34), Key, 1) : GfxTextW (FONTW (SbMono19), Key, 1);
-  INT32  PadX = Hi ? 14 : 7;
-  INT32  PadY = Hi ? 8 : 4;
-  INT32  BoxW = Kw + PadX * 2;
-  INT32  BoxH = Asc + PadY * 2;
-  INT32  MinW = BoxH;
-  INT32  BoxY = BaseY - Asc - PadY;
-  INT32  Rad  = Hi ? 8 : 4;
-  INT32  Lift = Hi ? 5 : 2;
-
   /*
-   * Glyphs inside the keycap are centered by font ascent, which
-   * includes the descender zone the printed glyph never uses; the
-   * marks sat low, so nudge the baselines up a touch.
+   * Boot-page keycaps: the box rides on the caption baseline, sized by
+   * the caption font; icons print in Syne (the arrows live there),
+   * letters in the wide mono, with Syne as the compact fallback.
    */
-  if (BoxW < MinW) {
-    BoxW = MinW;
-  }
-  DrawRoundBox (X, BoxY, BoxW, BoxH, Rad, COL_CARD);
-
   if (Hi) {
     if (UseSyneIcon) {
-      GfxText (X + (BoxW - Kw) / 2, BaseY - Lift, FONT (SbSyne34), Key, COL_WHITE, 1);
-    } else {
-      INT32  MAsc = GfxAscent (FONTW (SbMono44));
-      INT32  MKw  = GfxTextW (FONTW (SbMono44), Key, 1);
-      if (MKw + PadX * 2 > BoxW) {
-        /* use SbSyne34 for wide F10 so keycap stays compact */
-        GfxText (X + (BoxW - Kw) / 2, BaseY - Lift, FONT (SbSyne34), Key, COL_WHITE, 1);
-      } else {
-        GfxText (X + (BoxW - MKw) / 2, BoxY + (BoxH + MAsc) / 2 - Lift, FONT (SbMono44), Key, COL_WHITE, 1);
-      }
+      return GfxKeycap (X, BaseY, Key,
+                        FONTW (SbSyne34),
+                        FONT (SbSyne34), FONT (SbSyne34),
+                        14, 8, 8, 5, COL_CARD, COL_WHITE);
     }
-  } else {
-    if (UseSyneIcon) {
-      INT32  SAsc = GfxAscent (FONTW (SbSyne22));
-      INT32  SKw  = GfxTextW (FONTW (SbSyne22), Key, 1);
-      GfxText (X + (BoxW - SKw) / 2, BoxY + (BoxH + SAsc) / 2 - Lift, FONT (SbSyne22), Key, COL_WHITE, 1);
-    } else {
-      GfxText (X + (BoxW - Kw) / 2, BaseY - Lift, FONT (SbMono19), Key, COL_WHITE, 1);
-    }
+    return GfxKeycap (X, BaseY, Key,
+                      FONTW (SbSyne34),
+                      FONT (SbMono44), FONT (SbSyne34),
+                      14, 8, 8, 5, COL_CARD, COL_WHITE);
   }
-
-  return X + BoxW;
+  if (UseSyneIcon) {
+    return GfxKeycap (X, BaseY, Key,
+                      FONTW (SbMono19),
+                      FONT (SbSyne22), FONT (SbSyne22),
+                      7, 4, 4, 2, COL_CARD, COL_WHITE);
+  }
+  return GfxKeycap (X, BaseY, Key,
+                    FONTW (SbMono19),
+                    FONT (SbMono19), FONT (SbMono19),
+                    7, 4, 4, 2, COL_CARD, COL_WHITE);
 }
 
 STATIC

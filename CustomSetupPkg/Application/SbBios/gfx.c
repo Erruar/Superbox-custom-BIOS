@@ -290,6 +290,89 @@ GfxPolyFill (
 }
 
 VOID
+GfxRoundBox (
+  IN INT32   X,
+  IN INT32   Y,
+  IN INT32   W,
+  IN INT32   H,
+  IN INT32   R,
+  IN UINT32  Color
+  )
+{
+  if (R * 2 > W) {
+    R = W / 2;
+  }
+  if (R * 2 > H) {
+    R = H / 2;
+  }
+  if (R <= 0) {
+    GfxFill (X, Y, W, H, Color);
+    return;
+  }
+  GfxFill (X + R, Y, W - 2 * R, H, Color);
+  GfxFill (X, Y + R, W, H - 2 * R, Color);
+  GfxCircle (X + R, Y + R, R, Color, TRUE);
+  GfxCircle (X + W - R - 1, Y + R, R, Color, TRUE);
+  GfxCircle (X + R, Y + H - R - 1, R, Color, TRUE);
+  GfxCircle (X + W - R - 1, Y + H - R - 1, R, Color, TRUE);
+}
+
+/*
+ * One dark rounded keycap with its glyph, the boot page's marks.  The
+ * box is sized from BoxTab (the baseline the caller aligns to), the
+ * printed glyph comes from GlyphTab and falls back to FallbackTab when
+ * it would widen the cap (narrow "F10" in a compact box).  Ascent
+ * centering leaves the descender zone under the glyph, so Lift nudges
+ * the mark optically into the cap.  Returns the x past the cap.
+ */
+INT32
+GfxKeycap (
+  IN INT32           X,
+  IN INT32           BaseY,
+  IN CONST CHAR16    *Key,
+  IN CONST SB_GLYPH  *BoxTab,
+  IN UINTN           BoxCount,
+  IN CONST SB_GLYPH  *GlyphTab,
+  IN UINTN           GlyphCount,
+  IN CONST UINT8     *GlyphBits,
+  IN CONST SB_GLYPH  *FallbackTab,
+  IN UINTN           FallbackCount,
+  IN CONST UINT8     *FallbackBits,
+  IN INT32           PadX,
+  IN INT32           PadY,
+  IN INT32           Rad,
+  IN INT32           Lift,
+  IN UINT32          BoxColor,
+  IN UINT32          InkColor
+  )
+{
+  INT32  Asc  = GfxAscent (BoxTab, BoxCount);
+  INT32  Kw   = GfxTextW (BoxTab, BoxCount, Key, 1);
+  INT32  BoxW = Kw + PadX * 2;
+  INT32  BoxH = Asc + PadY * 2;
+  INT32  BoxY = BaseY - Asc - PadY;
+  INT32  GW;
+
+  if (BoxW < BoxH) {
+    BoxW = BoxH;
+  }
+  GfxRoundBox (X, BoxY, BoxW, BoxH, Rad, BoxColor);
+
+  GW = GfxTextW (GlyphTab, GlyphCount, Key, 1);
+  if (GW + PadX * 2 > BoxW) {
+    GW = GfxTextW (FallbackTab, FallbackCount, Key, 1);
+    GfxText (X + (BoxW - GW) / 2, BaseY - Lift,
+             FallbackTab, FallbackCount, FallbackBits, Key, InkColor, 1);
+  } else {
+    INT32  GAsc = GfxAscent (GlyphTab, GlyphCount);
+
+    GfxText (X + (BoxW - GW) / 2, BoxY + (BoxH + GAsc) / 2 - Lift,
+             GlyphTab, GlyphCount, GlyphBits, Key, InkColor, 1);
+  }
+  return X + BoxW;
+}
+
+VOID
 GfxCircle (
   IN INT32    Cx,
   IN INT32    Cy,

@@ -90,6 +90,16 @@ INT32      GfxAscent (IN CONST SB_GLYPH *Tab, IN UINTN Count);
 VOID       GfxPolyFill (IN CONST INT32 (*Pts)[2], IN UINTN Count, IN UINT32 C);
 VOID       GfxCircle (INT32 Cx, INT32 Cy, INT32 R, UINT32 Color, BOOLEAN Fill);
 VOID       GfxGear (INT32 Cx, INT32 Cy, INT32 R, UINT32 Ink, UINT32 Hole);
+VOID       GfxRoundBox (INT32 X, INT32 Y, INT32 W, INT32 H, INT32 R,
+                        UINT32 Color);
+INT32      GfxKeycap (INT32 X, INT32 BaseY, IN CONST CHAR16 *Key,
+                      IN CONST SB_GLYPH *BoxTab, IN UINTN BoxCount,
+                      IN CONST SB_GLYPH *GlyphTab, IN UINTN GlyphCount,
+                      IN CONST UINT8 *GlyphBits,
+                      IN CONST SB_GLYPH *FallbackTab, IN UINTN FallbackCount,
+                      IN CONST UINT8 *FallbackBits,
+                      IN INT32 PadX, IN INT32 PadY, IN INT32 Rad, IN INT32 Lift,
+                      IN UINT32 BoxColor, IN UINT32 InkColor);
 
 /* hand-drawn strokes: deterministic wobble, same seed -> same line */
 VOID       GfxSketchH (INT32 X, INT32 Y, INT32 Len, UINT32 Seed, UINT32 Color);
