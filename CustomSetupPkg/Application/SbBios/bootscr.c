@@ -52,7 +52,6 @@ STATIC INT32    mCardX, mCardY0, mCardW, mCardH, mCardGap;
 
 #define TITLE_TXT  L"superbox"
 #define PRESS_TXT  L"PRESS \x21B5 TO CONTINUE"          /* ↩ */
-#define HINTS_TXT  L"\x21C5 NAVIGATE   E EDIT   C CONSOLE   F10 SETUP"
 #define SIGN_TXT   L"2026 @Serzhik Saku"
 #define POWER_TXT  L"powered by Saku Overclock"
 
@@ -858,8 +857,8 @@ BootDraw (
         Fx += GfxText (Fx, Fy, FONT (SbMono44), L"NAVIGATE", COL_INK, 1) + Sep;
         Fx = DrawKeycap (Fx, Fy, L"E", TRUE, FALSE) + Sp;
         Fx += GfxText (Fx, Fy, FONT (SbMono44), L"EDIT", COL_INK, 1) + Sep;
-        Fx = DrawKeycap (Fx, Fy, L"C", TRUE, FALSE) + Sp;
-        Fx += GfxText (Fx, Fy, FONT (SbMono44), L"CONSOLE", COL_INK, 1) + Sep;
+        Fx = DrawKeycap (Fx, Fy, L"F12", TRUE, FALSE) + Sp;
+        Fx += GfxText (Fx, Fy, FONT (SbMono44), L"SCREENSHOT", COL_INK, 1) + Sep;
         Fx = DrawKeycap (Fx, Fy, L"F10", TRUE, FALSE) + Sp;
         GfxText (Fx, Fy, FONT (SbMono44), L"SETUP", COL_INK, 1);
         GfxText (Mar, H * 87 / 100, FONT (SbMono44), SIGN_TXT, COL_INK, 1);
@@ -868,8 +867,8 @@ BootDraw (
         Fx += GfxText (Fx, Fy, FONT (SbMono19), L"NAVIGATE", COL_INK, 1) + Sep;
         Fx = DrawKeycap (Fx, Fy, L"E", FALSE, FALSE) + Sp;
         Fx += GfxText (Fx, Fy, FONT (SbMono19), L"EDIT", COL_INK, 1) + Sep;
-        Fx = DrawKeycap (Fx, Fy, L"C", FALSE, FALSE) + Sp;
-        Fx += GfxText (Fx, Fy, FONT (SbMono19), L"CONSOLE", COL_INK, 1) + Sep;
+        Fx = DrawKeycap (Fx, Fy, L"F12", FALSE, FALSE) + Sp;
+        Fx += GfxText (Fx, Fy, FONT (SbMono19), L"SCREENSHOT", COL_INK, 1) + Sep;
         Fx = DrawKeycap (Fx, Fy, L"F10", FALSE, FALSE) + Sp;
         GfxText (Fx, Fy, FONT (SbMono19), L"SETUP", COL_INK, 1);
         GfxText (Mar, H * 87 / 100, FONT (SbMono19), SIGN_TXT, COL_INK, 1);
@@ -1060,6 +1059,20 @@ BootEvent (
     case SCAN_F10:
       mWantSetup = TRUE;
       return;
+    case SCAN_F12: {
+      CHAR16  Name[48];
+
+      /* the write takes seconds: show a busy note before it starts */
+      StrCpyS (mStatusMsg, 96, L"saving screenshot...");
+      BootDraw ();
+      if (!EFI_ERROR (GfxScreenshot (Name, 48))) {
+        UnicodeSPrint (mStatusMsg, 96, L"saved %s", Name);
+      } else {
+        StrCpyS (mStatusMsg, 96, L"no USB stick (3.7-120 GB) found");
+      }
+      BootDraw ();
+      return;
+    }
     default:
       break;
   }
