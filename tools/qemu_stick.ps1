@@ -1,13 +1,12 @@
 # One-shot QEMU cycle with the 8 GiB stick: rebuild image, fresh serial,
 # launch. Mirrors tools/qemu_run.ps1 exactly, plus disk1.
-$Repo = Split-Path -Parent (Split-Path -Path $PSScriptRoot -Parent)
-$Repo = 'C:\Users\Sakura\CLionProjects\Superbox custom BIOS'
-$Work = 'C:\dev\sbx\qemu'
-$Qemu = 'C:\msys64\ucrt64\bin\qemu-system-x86_64.exe'
-
 param(
     [switch]$Stop
 )
+
+$Repo = 'C:\Users\Sakura\CLionProjects\Superbox custom BIOS'
+$Work = 'C:\dev\sbx\qemu'
+$Qemu = 'C:\msys64\ucrt64\bin\qemu-system-x86_64.exe'
 
 Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" |
     Where-Object { $_.CommandLine -like '*sbx\qemu*' } |
