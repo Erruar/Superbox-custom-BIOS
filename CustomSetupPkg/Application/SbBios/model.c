@@ -1700,6 +1700,10 @@ ModelRunSetup (
                   mSetupAppPhase
                   );
 
+  if (!mRunnerRan && (Runner != NULL)) {
+    Runner ();
+  }
+
   gBS->RaiseTPL = mOrigRaiseTpl;
   if ((gST->ConOut != NULL) && (OrigClear != NULL)) {
     gST->ConOut->ClearScreen = OrigClear;
@@ -1711,10 +1715,6 @@ ModelRunSetup (
     if (OrigCallback != NULL) {
       Fb2->BrowserCallback = OrigCallback;
     }
-  }
-
-  if (!mRunnerRan && (Runner != NULL)) {
-    Runner ();
   }
 
   if (!mRunnerRan && (mSetupAppHandle != NULL) && (mSetupAppPhase != NULL)) {

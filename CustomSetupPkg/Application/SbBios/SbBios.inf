@@ -35,6 +35,7 @@
   DevicePathLib
   DebugLib
   SerialPortLib
+  IoLib
 
 [Guids]
   gEfiFileInfoGuid                          ## CONSUMES ## GUID
@@ -54,3 +55,4 @@
   gEfiSimpleFileSystemProtocolGuid          ## CONSUMES
   gEfiBlockIoProtocolGuid                   ## CONSUMES
   gEfiPciIoProtocolGuid                     ## CONSUMES
+  gEfiPciRootBridgeIoProtocolGuid           ## CONSUMES

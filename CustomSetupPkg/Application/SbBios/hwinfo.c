@@ -32,6 +32,8 @@
  */
 
 #include "SbBios.h"
+#include <Library/IoLib.h>
+#include <Protocol/PciRootBridgeIo.h>
 
 #define MSR_COFVID_STATUS       0xC0010071u
 
@@ -75,7 +77,60 @@ STATIC UINTN    mGpuFreqMHz = 0;
 STATIC UINTN    mGpuVoltMv = 0;
 STATIC CHAR16   mBrand[64];
 
-STATIC EFI_PCI_IO_PROTOCOL  *mD0F0 = NULL;
+STATIC EFI_PCI_IO_PROTOCOL              *mD0F0 = NULL;
+STATIC EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL  *mRbIo = NULL;
+
+STATIC
+EFI_STATUS
+PciCfgRead32 (
+  IN  EFI_PCI_IO_PROTOCOL  *Pci,
+  IN  UINT8                Dev,
+  IN  UINT8                Func,
+  IN  UINT32               Reg,
+  OUT UINT32               *Val
+  )
+{
+  if (Pci != NULL) {
+    return Pci->Pci.Read (Pci, EfiPciIoWidthUint32, Reg, 1, Val);
+  }
+  if (mRbIo != NULL) {
+    UINT64  Addr = EFI_PCI_ADDRESS (0, Dev, Func, Reg);
+    return mRbIo->Pci.Read (mRbIo, EfiPciWidthUint32, Addr, 1, Val);
+  }
+  if (Reg < 0x100u) {
+    UINT32  CfgAddr = 0x80000000u | ((UINT32)Dev << 11) | ((UINT32)Func << 8) | (Reg & 0xFCu);
+    IoWrite32 (0xCF8, CfgAddr);
+    *Val = IoRead32 (0xCFC);
+    return EFI_SUCCESS;
+  }
+  return EFI_UNSUPPORTED;
+}
+
+STATIC
+EFI_STATUS
+PciCfgWrite32 (
+  IN EFI_PCI_IO_PROTOCOL  *Pci,
+  IN UINT8                Dev,
+  IN UINT8                Func,
+  IN UINT32               Reg,
+  IN UINT32               Val
+  )
+{
+  if (Pci != NULL) {
+    return Pci->Pci.Write (Pci, EfiPciIoWidthUint32, Reg, 1, &Val);
+  }
+  if (mRbIo != NULL) {
+    UINT64  Addr = EFI_PCI_ADDRESS (0, Dev, Func, Reg);
+    return mRbIo->Pci.Write (mRbIo, EfiPciWidthUint32, Addr, 1, &Val);
+  }
+  if (Reg < 0x100u) {
+    UINT32  CfgAddr = 0x80000000u | ((UINT32)Dev << 11) | ((UINT32)Func << 8) | (Reg & 0xFCu);
+    IoWrite32 (0xCF8, CfgAddr);
+    IoWrite32 (0xCFC, Val);
+    return EFI_SUCCESS;
+  }
+  return EFI_UNSUPPORTED;
+}
 
 /* SVI2 8-bit VID -> millivolts (1.55V - VID * 6.25 mV) */
 STATIC
@@ -166,15 +221,15 @@ ReadTempFromD0F0 (
   UINT32      Reg = 0;
   UINTN       TempC;
 
-  if (D0F0 == NULL) {
+  if (!mIsSmu8Apu) {
     return;
   }
 
-  Status = D0F0->Pci.Write (D0F0, EfiPciIoWidthUint32, D0F0_SMU_INDEX_REG, 1, &Addr);
+  Status = PciCfgWrite32 (D0F0, 0, 0, D0F0_SMU_INDEX_REG, Addr);
   if (EFI_ERROR (Status)) {
     return;
   }
-  Status = D0F0->Pci.Read (D0F0, EfiPciIoWidthUint32, D0F0_SMU_DATA_REG, 1, &Reg);
+  Status = PciCfgRead32 (D0F0, 0, 0, D0F0_SMU_DATA_REG, &Reg);
 
   if (EFI_ERROR (Status) || Reg == 0xFFFFFFFFu) {
     return;
@@ -201,11 +256,11 @@ SmuWrite (
 {
   EFI_STATUS  Status;
 
-  Status = D0F0->Pci.Write (D0F0, EfiPciIoWidthUint32, D0F0_SMU_INDEX_REG, 1, &Addr);
+  Status = PciCfgWrite32 (D0F0, 0, 0, D0F0_SMU_INDEX_REG, Addr);
   if (EFI_ERROR (Status)) {
     return Status;
   }
-  return D0F0->Pci.Write (D0F0, EfiPciIoWidthUint32, D0F0_SMU_DATA_REG, 1, &Val);
+  return PciCfgWrite32 (D0F0, 0, 0, D0F0_SMU_DATA_REG, Val);
 }
 
 STATIC
@@ -218,11 +273,11 @@ SmuRead (
 {
   EFI_STATUS  Status;
 
-  Status = D0F0->Pci.Write (D0F0, EfiPciIoWidthUint32, D0F0_SMU_INDEX_REG, 1, &Addr);
+  Status = PciCfgWrite32 (D0F0, 0, 0, D0F0_SMU_INDEX_REG, Addr);
   if (EFI_ERROR (Status)) {
     return Status;
   }
-  return D0F0->Pci.Read (D0F0, EfiPciIoWidthUint32, D0F0_SMU_DATA_REG, 1, Val);
+  return PciCfgRead32 (D0F0, 0, 0, D0F0_SMU_DATA_REG, Val);
 }
 
 /*
@@ -241,7 +296,7 @@ ReadGpuFreqFromD0F0 (
   UINTN       Tries;
   UINTN       FreqMHz;
 
-  if (D0F0 == NULL || !mGpuPresent) {
+  if (!mIsSmu8Apu || !mGpuPresent) {
     return;
   }
 
@@ -294,35 +349,54 @@ ReadMemFromD18F2 (
   UINT32      Idx, Reg = 0;
   UINTN       Tries;
 
-  if (D18F2 == NULL) {
-    return;
+  UINT32  OrigDctSel = 0;
+  BOOLEAN HasDctSel  = FALSE;
+  UINT32  Dct;
+
+  /* Memory frequency from D18F2x94[MemClkFreq] (bits 4:0), checking DCT0..DCT1 */
+  if (!EFI_ERROR (PciCfgRead32 (NULL, 18, 1, 0x10C, &OrigDctSel)) && OrigDctSel != 0xFFFFFFFFu) {
+    HasDctSel = TRUE;
   }
 
-  /* Memory frequency from D18F2x94[MemClkFreq] (bits 4:0) */
-  Status = D18F2->Pci.Read (D18F2, EfiPciIoWidthUint32, D18F2_DCHR0_REG, 1, &Dchr);
-  SbLog ("[hw] d18f2x94", Status, Dchr);
-  if (!EFI_ERROR (Status) && Dchr != 0xFFFFFFFFu && ((Dchr & (1u << 7)) != 0)) {
-    UINTN  MemClkFreq = (UINTN)(Dchr & 0x1F);
-    if (MemClkFreq >= 0x04) {
-      mMemFreqMHz = ((MemClkFreq + 6) * 200) / 3;
-      mMemReal    = TRUE;
+  for (Dct = 0; Dct < 2; Dct++) {
+    if (HasDctSel) {
+      PciCfgWrite32 (NULL, 18, 1, 0x10C, (OrigDctSel & ~0x7u) | Dct);
     }
+    Dchr = 0;
+    Status = PciCfgRead32 (D18F2, 18, 2, D18F2_DCHR0_REG, &Dchr);
+    SbLog ("[hw] d18f2x94", Status, Dchr);
+    if (!EFI_ERROR (Status) && Dchr != 0xFFFFFFFFu &&
+        ((Dchr & (1u << 14)) == 0) && ((Dchr & (1u << 7)) != 0)) {
+      UINTN  MemClkFreq = (UINTN)(Dchr & 0x1F);
+      if (MemClkFreq >= 0x04) {
+        mMemFreqMHz = ((MemClkFreq + 6) * 200) / 3;
+        mMemReal    = TRUE;
+        break;
+      }
+    }
+    if (!HasDctSel) {
+      break;
+    }
+  }
+
+  if (HasDctSel) {
+    PciCfgWrite32 (NULL, 18, 1, 0x10C, OrigDctSel);
   }
 
   /* Memory voltage from D18F2x9C_x0001_004A (DqDqsRcvCntrl1) */
   Idx = DCT_DQ_DQS_RCV_CNTRL1;
-  Status = D18F2->Pci.Write (D18F2, EfiPciIoWidthUint32, D18F2_DCT_OFFSET_REG, 1, &Idx);
+  Status = PciCfgWrite32 (D18F2, 18, 2, D18F2_DCT_OFFSET_REG, Idx);
   if (!EFI_ERROR (Status)) {
     for (Tries = 0; Tries < 64; Tries++) {
       Idx = 0;
-      Status = D18F2->Pci.Read (D18F2, EfiPciIoWidthUint32, D18F2_DCT_OFFSET_REG, 1, &Idx);
+      Status = PciCfgRead32 (D18F2, 18, 2, D18F2_DCT_OFFSET_REG, &Idx);
       if (EFI_ERROR (Status) || (Idx & 0x80000000u) != 0) {
         break;
       }
       CpuPause ();
     }
     if (!EFI_ERROR (Status) && (Idx & 0x80000000u) != 0) {
-      Status = D18F2->Pci.Read (D18F2, EfiPciIoWidthUint32, D18F2_DCT_DATA_REG, 1, &Reg);
+      Status = PciCfgRead32 (D18F2, 18, 2, D18F2_DCT_DATA_REG, &Reg);
       SbLog ("[hw] dqdqsrcvcntrl1", Status, Reg);
       if (!EFI_ERROR (Status) && Reg != 0xFFFFFFFFu) {
         UINTN  MajorMode = (UINTN)((Reg >> 4) & 0x7);
@@ -358,11 +432,7 @@ ReadGpuVoltFromD18F5 (
   UINT32      Reg = 0;
   UINTN       NbVid, NbPs;
 
-  if (D18F5 == NULL) {
-    return;
-  }
-
-  Status = D18F5->Pci.Read (D18F5, EfiPciIoWidthUint32, D18F5_NBPSTATE_STS_REG, 1, &Reg);
+  Status = PciCfgRead32 (D18F5, 18, 5, D18F5_NBPSTATE_STS_REG, &Reg);
   SbLog ("[hw] d18f5x174", Status, Reg);
   if (EFI_ERROR (Status) || Reg == 0xFFFFFFFFu) {
     return;
@@ -373,8 +443,7 @@ ReadGpuVoltFromD18F5 (
     /* Cross-check active NB P-state entry D18F5x16[0..C] */
     NbPs = (UINTN)((Reg >> 19) & 0x3);
     Reg  = 0;
-    Status = D18F5->Pci.Read (D18F5, EfiPciIoWidthUint32,
-                              (UINT32)(D18F5_NBPSTATE_BASE + NbPs * 4), 1, &Reg);
+    Status = PciCfgRead32 (D18F5, 18, 5, (UINT32)(D18F5_NBPSTATE_BASE + NbPs * 4), &Reg);
     if (!EFI_ERROR (Status) && Reg != 0xFFFFFFFFu) {
       NbVid = (UINTN)(((Reg >> 10) & 0x7F) | (((Reg >> 21) & 1) << 7));
     }
@@ -406,6 +475,8 @@ ProbePciOnce (
   if (!mIsSmu8Apu) {
     return;
   }
+
+  gBS->LocateProtocol (&gEfiPciRootBridgeIoProtocolGuid, NULL, (VOID **)&mRbIo);
 
   Handles = NULL;
   Status  = gBS->LocateHandleBuffer (ByProtocol, &gEfiPciIoProtocolGuid,
