@@ -3,21 +3,23 @@
  * is attached to it.  Everything goes to sbxlog.txt via SbLogStr, so you can
  * boot once cold, once warm (after a Windows boot) and diff the two logs.
  *
- * Call GopDiag ("tag") right after SbLogInit () and again after GfxInit ().
- *
  * What to look for in the diff:
  *   - number of GOP handles differs        -> second GOP appears / disappears
  *   - handle count same, MaxMode differs   -> same GOP, mode list built from
  *                                             a different (fallback) source
- *   - EDID missing / size 0 / only the
- *     128-byte base block in cold boot     -> EDID read (DDC/AUX) failed
- *                                             during cold init, GOP fell back
- *                                             to its built-in VESA list
+ *   - FrameBufferSize: cold shows 0x500000 (5 MiB = exactly 1280x1024*4)
+ *     while warm shows 0x1FA4000 (4K*4): the mode list is gated by the
+ *     video window the GPU believes it owns, not by the EDID (identical
+ *     in both boots).  Compare CONFIG_MEMSIZE: if cold is ~5 MiB and warm
+ *     hundreds, the UMA window is the filter.
+ *
+ * Call GopDiag ("tag") right after SbLogInit () and again after GfxInit ().
  */
 
 #include "SbBios.h"
 #include <Protocol/EdidDiscovered.h>
 #include <Protocol/EdidActive.h>
+#include <IndustryStandard/Acpi10.h>
 
 /* set to 1 to try re-running the display driver binding when the mode list
  * looks like the fallback one.  Experimental: the text console may blink. */
@@ -95,6 +97,22 @@ DumpEdidBlob (
   Hact = (UINT32)(E[56] | ((E[58] & 0xF0) << 4));
   Vact = (UINT32)(E[59] | ((E[61] & 0xF0) << 4));
   LogFmt ("    %a: preferred DTD %ux%u pclk %u kHz", Name, Hact, Vact, Clk * 10);
+
+  /*
+   * Full base block (and the CEA extension when present): standard
+   * timings sit at 0x24..0x34, the descriptors at 0x48..0x7F.  Needed
+   * to prove the cold and warm EDIDs match byte for byte.
+   */
+  for (Index = 0; Index < Size; Index += 16) {
+    UINTN  Count16 = ((UINTN)Size - Index) > 16 ? 16 : ((UINTN)Size - Index);
+    UINTN  J;
+
+    for (J = 0; J < Count16; J++) {
+      AsciiSPrint (&Hex[J * 3], 4, "%02x ", E[Index + J]);
+    }
+    Hex[Count16 * 3] = 0;
+    LogFmt ("    %a: %03x: %a", Name, Index, Hex);
+  }
 }
 
 STATIC
@@ -145,6 +163,75 @@ DumpPciOwner (
   Pci->Pci.Read (Pci, EfiPciIoWidthUint16, 0, 1, &Ven);
   Pci->Pci.Read (Pci, EfiPciIoWidthUint16, 2, 1, &Did);
   LogFmt ("    pci: %02x:%02x.%x  %04x:%04x", Bus, Dev, Fn, Ven, Did);
+}
+
+/*
+ * iGPU register probe: the cold-boot mode list stops exactly where a
+ * 5 MiB framebuffer ends, so ask the GPU how much video window it
+ * thinks it has.  CONFIG_MEMSIZE is GFX8 register 0x150A (dword index),
+ * byte offset 0x5428 in the MMIO BAR; amdgpu uses BAR5 on APUs.  The
+ * value decodes as MiB in bits 21:12.  All reads, no writes.
+ */
+STATIC
+VOID
+GpuDiag (
+  VOID
+  )
+{
+  EFI_HANDLE  *Handles = NULL;
+  UINTN       Count = 0, Index;
+  UINTN       Bar;
+
+  if (EFI_ERROR (gBS->LocateHandleBuffer (ByProtocol, &gEfiPciIoProtocolGuid,
+                                          NULL, &Count, &Handles))) {
+    return;
+  }
+  for (Index = 0; Index < Count; Index++) {
+    EFI_PCI_IO_PROTOCOL  *Pci = NULL;
+    UINT32               Id = 0, Cmd = 0, MemSize = 0;
+    UINT8                Class[3];
+
+    if (EFI_ERROR (gBS->HandleProtocol (Handles[Index], &gEfiPciIoProtocolGuid,
+                                        (VOID **)&Pci)) || (Pci == NULL)) {
+      continue;
+    }
+    Pci->Pci.Read (Pci, EfiPciIoWidthUint32, 0, 1, &Id);
+    Pci->Pci.Read (Pci, EfiPciIoWidthUint8, 9, 3, Class);
+    if ((Class[2] != 0x03) || ((Id & 0xFFFF) != 0x1002)) {
+      continue;                   /* not an AMD display controller */
+    }
+
+    Pci->Pci.Read (Pci, EfiPciIoWidthUint32, 4, 1, &Cmd);
+    LogFmt ("  gpu %04x:%04x command 0x%08x (mem-enable %u)",
+            Id & 0xFFFF, Id >> 16, Cmd, (Cmd & BIT1) ? 1 : 0);
+
+    for (Bar = 0; Bar < 6; Bar++) {
+      VOID  *Res = NULL;
+
+      if (EFI_ERROR (Pci->GetBarAttributes (Pci, (UINT8)Bar, NULL, &Res)) ||
+          (Res == NULL)) {
+        continue;
+      }
+      {
+        EFI_ACPI_ADDRESS_SPACE_DESCRIPTOR  *D = Res;
+
+        LogFmt ("  gpu bar%u: %a base 0x%lx len 0x%lx", Bar,
+                (D->ResType == ACPI_ADDRESS_SPACE_TYPE_MEM) ? "mem" :
+                (D->ResType == ACPI_ADDRESS_SPACE_TYPE_IO)  ? "io"  : "bus",
+                D->AddrRangeMin, D->AddrLen);
+      }
+      FreePool (Res);
+    }
+
+    if (!EFI_ERROR (Pci->Mem.Read (Pci, EfiPciIoWidthUint32, 5, 0x5428,
+                                   1, &MemSize))) {
+      LogFmt ("  gpu CONFIG_MEMSIZE 0x%08x = %u MiB",
+              MemSize, (MemSize >> 12) & 0x3F);
+    } else {
+      LogFmt ("  gpu CONFIG_MEMSIZE read failed");
+    }
+  }
+  FreePool (Handles);
 }
 
 VOID
@@ -221,7 +308,10 @@ GopDiag (
     FreePool (Handles);
   }
 
-  /* 4. ConOut GOP, so we can tell whether text console and LocateProtocol
+  /* 4. AMD iGPU: BAR sizes and the configured video window */
+  GpuDiag ();
+
+  /* 5. ConOut GOP, so we can tell whether text console and LocateProtocol
    *    agree */
   LogFmt ("ConOut handle: %p", gST->ConsoleOutHandle);
   LogFmt ("==== end [%a] ====", Tag);
