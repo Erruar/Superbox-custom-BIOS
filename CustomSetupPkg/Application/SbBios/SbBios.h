@@ -69,6 +69,7 @@ VOID       SbLog6 (IN CONST CHAR8  *Tag, IN UINTN V1, IN UINTN V2,
 VOID       GopDiag (IN CONST CHAR8  *Tag);
 VOID       GopDiagReconnect (VOID);
 EFI_STATUS GfxInit (VOID);
+EFI_STATUS GfxRebind (VOID);        /* after display reconnect (F11 probe) */
 VOID       GfxExit (VOID);
 UINT32     GfxWidth (VOID);
 UINT32     GfxHeight (VOID);

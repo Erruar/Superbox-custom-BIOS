@@ -21,9 +21,14 @@
 #include <Protocol/EdidActive.h>
 #include <IndustryStandard/Acpi10.h>
 
-/* set to 1 to try re-running the display driver binding when the mode list
- * looks like the fallback one.  Experimental: the text console may blink. */
-#define GOPDIAG_RECONNECT  0
+/*
+ * Re-running the display driver binding re-does the UMD connector probe:
+ * DPCD re-read (MAX_LANE_COUNT/MAX_LINK_RATE) and EDID re-read, which is
+ * exactly the state the AMD GOP mode filters consume
+ * (UmdModeBandwidthCheck / UmdTimingListFilterWidth in A8DAFB9B.efi).
+ * Triggered from the boot page with F11.  Text console may blink.
+ */
+#define GOPDIAG_RECONNECT  1
 
 STATIC
 VOID
@@ -255,6 +260,10 @@ GpuDiag (
     }
 
     if (RegBar != 0xFF) {
+      UINT32  Scr[12];
+      UINTN   Index2;
+      BOOLEAN Got = FALSE;
+
       if ((0x5428 + 4) <= RegLen) {
         if (!EFI_ERROR (Pci->Mem.Read (Pci, EfiPciIoWidthUint32, RegBar,
                                        0x5428, 1, &MemSize))) {
@@ -271,6 +280,33 @@ GpuDiag (
         }
       } else {
         LogFmt ("  gpu: register window bar%u too small (0x%lx)",
+                RegBar, RegLen);
+      }
+
+      /*
+       * BIOS_SCRATCH: the AMD GOP driver (A8DAFB9B) stores the DP link
+       * state it trained (lane count, link rate, detected signal type)
+       * in GPU scratch registers, and amdkmdag overwrites them when it
+       * re-trains the link under Windows.  GFX8 indices 0x5C4..0x5CF =
+       * byte offsets 0x1710..0x173C in the register window; a cold/warm
+       * diff shows exactly what the Windows driver changed in the GPU.
+       */
+      if ((0x1710 + sizeof (Scr)) <= RegLen) {
+        if (!EFI_ERROR (Pci->Mem.Read (Pci, EfiPciIoWidthUint32, RegBar,
+                                       0x1710, 12, Scr))) {
+          Got = TRUE;
+        }
+      }
+      if (Got) {
+        for (Index2 = 0; Index2 < 12; Index2 += 6) {
+          LogFmt ("  gpu BIOS_SCRATCH 0x5c%u: 0x%08x 0x%08x 0x%08x "
+                  "0x%08x 0x%08x 0x%08x",
+                  4 + (Index2 / 2), Scr[Index2], Scr[Index2 + 1],
+                  Scr[Index2 + 2], Scr[Index2 + 3], Scr[Index2 + 4],
+                  Scr[Index2 + 5]);
+        }
+      } else {
+        LogFmt ("  gpu BIOS_SCRATCH read failed (bar%u len 0x%lx)",
                 RegBar, RegLen);
       }
     } else {

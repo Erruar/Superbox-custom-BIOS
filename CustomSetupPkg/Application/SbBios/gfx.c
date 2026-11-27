@@ -1136,6 +1136,93 @@ GfxInit (
   return EFI_SUCCESS;
 }
 
+/*
+ * Re-locate GOP after a display driver reconnect (F11 probe): the UMD
+ * connector probe may now accept modes it filtered out (wider timing
+ * list, higher bandwidth).  Picks the largest mode again and resizes
+ * the render buffers.  GfxStepMode owns the mode-switch path, this is
+ * the reconnect path.
+ */
+EFI_STATUS
+GfxRebind (
+  VOID
+  )
+{
+  EFI_STATUS  Status;
+  EFI_GRAPHICS_OUTPUT_PROTOCOL  *NewGop = NULL;
+  UINTN       Index, SizeOfInfo, Best, BestArea, MaxMode;
+  UINT32      *NewBack, *NewStage;
+  UINTN       NewMaxMode;
+
+  Status = gBS->LocateProtocol (
+                  &gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&NewGop);
+  if (EFI_ERROR (Status) || (NewGop == NULL) || (NewGop->Mode == NULL)) {
+    SbLog ("[gfx] rebind: no gop", (UINTN)Status, 0);
+    return EFI_NOT_FOUND;
+  }
+  mGop = NewGop;
+
+  MaxMode  = mGop->Mode->MaxMode;
+  Best     = mGop->Mode->Mode;
+  BestArea = 0;
+  if (mGop->Mode->Info != NULL) {
+    BestArea = (UINTN)mGop->Mode->Info->HorizontalResolution *
+               mGop->Mode->Info->VerticalResolution;
+  }
+
+  for (Index = 0; Index < MaxMode; Index++) {
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION  *Info = NULL;
+
+    SizeOfInfo = 0;
+    Status     = mGop->QueryMode (mGop, Index, &SizeOfInfo, &Info);
+    if (EFI_ERROR (Status) || (Info == NULL)) {
+      continue;
+    }
+    if ((UINTN)Info->HorizontalResolution * Info->VerticalResolution > BestArea) {
+      BestArea = (UINTN)Info->HorizontalResolution * Info->VerticalResolution;
+      Best     = Index;
+    }
+    FreePool (Info);
+  }
+
+  Status = mGop->SetMode (mGop, Best);
+  if (EFI_ERROR (Status) || (mGop->Mode->Info == NULL)) {
+    SbLog ("[gfx] rebind setmode", Best, (UINTN)Status);
+    return EFI_DEVICE_ERROR;
+  }
+  mTargetMode = mGop->Mode->Mode;
+  GfxMeasure ();
+
+  NewBack = AllocateZeroPool ((UINTN)mWidth * mHeight * sizeof (UINT32));
+  if (NewBack == NULL) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+  NewStage = NULL;
+  if (mSwapRb) {
+    NewStage = AllocatePool ((UINTN)mWidth * mHeight * sizeof (UINT32));
+    if (NewStage == NULL) {
+      FreePool (NewBack);
+      return EFI_OUT_OF_RESOURCES;
+    }
+  }
+  if (mBack != NULL) {
+    FreePool (mBack);
+  }
+  if (mStage != NULL) {
+    FreePool (mStage);
+  }
+  mBack  = NewBack;
+  mStage = NewStage;
+
+  mCurX = (INT32)(mWidth / 2);
+  mCurY = (INT32)(mHeight / 2);
+  NewMaxMode = mGop->Mode->MaxMode;
+  GfxClear (COL_BG);
+  SbLog ("[gfx] rebind", MaxMode, NewMaxMode);
+  SbLog ("[gfx] at rebind", mWidth, mHeight);
+  return EFI_SUCCESS;
+}
+
 EFI_STATUS
 GfxStepMode (
   IN INTN  Direction
