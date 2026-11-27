@@ -5,9 +5,14 @@ $Repo = 'C:\Users\Sakura\CLionProjects\Superbox custom BIOS'
 $Work = 'C:\dev\sbx\qemu'
 $Qemu = 'C:\msys64\ucrt64\bin\qemu-system-x86_64.exe'
 
+param(
+    [switch]$Stop
+)
+
 Get-CimInstance Win32_Process -Filter "Name='qemu-system-x86_64.exe'" |
     Where-Object { $_.CommandLine -like '*sbx\qemu*' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force; "stopped pid $($_.ProcessId)" }
+if ($Stop) { exit 0 }
 
 Copy-Item "$Repo\build\SbBios.efi" "$Work\SbBios.efi" -Force
 $env:MKFAT_NSH = "$Repo\tools\startup.nsh"
