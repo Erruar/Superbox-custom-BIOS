@@ -634,12 +634,222 @@ GfxPencilCorners (
 
 /* -------------------------------------------------------------- screenshot */
 
-#define SHOT_NAME  L"sbxshot"
+#define SHOT_MARK    L"sbxlog.txt"        /* our field log: the stick marker */
+#define SHOT_MIN_B   3700000000ULL        /* 3.7 GB  (thumb drives start ~4) */
+#define SHOT_MAX_B   120000000000ULL      /* 120 GB                          */
 
 /*
- * Print Screen: write the back buffer as a 24bpp BMP to the first FAT
- * volume that accepts writes (the USB stick).  Used to grab hardware
- * screenshots, where no other debug output exists.
+ * Byte size of the block range behind a file-system handle.  The
+ * SimpleFileSystem handle carries BlockIo itself only for raw
+ * whole-disk volumes; partition-mounted file systems keep BlockIo on
+ * the parent handle, so walk the device path from the deepest node
+ * upward until a BlockIo appears.  0 when none exists (RAM disks,
+ * network).
+ */
+STATIC
+UINT64
+BlkBytes (
+  IN EFI_HANDLE  Handle
+  )
+{
+  EFI_BLOCK_IO_PROTOCOL  *Blk;
+
+  if (EFI_ERROR (gBS->HandleProtocol (Handle, &gEfiBlockIoProtocolGuid,
+                                      (VOID **)&Blk)) ||
+      (Blk == NULL) || (Blk->Media == NULL)) {
+    return 0;
+  }
+  return (Blk->Media->LastBlock + 1) * Blk->Media->BlockSize;
+}
+
+STATIC
+UINT64
+VolBytes (
+  IN EFI_HANDLE  Handle
+  )
+{
+  EFI_DEVICE_PATH_PROTOCOL  *Dp;
+  EFI_DEVICE_PATH_PROTOCOL  *Node;
+  UINTN                     Offsets[16];
+  UINTN                     NNodes = 0;
+  UINTN                     EndLen;
+  UINTN                     I;
+  UINT64                    Size;
+
+  Size = BlkBytes (Handle);
+  if (Size != 0) {
+    return Size;
+  }
+
+  if (EFI_ERROR (gBS->HandleProtocol (Handle, &gEfiDevicePathProtocolGuid,
+                                      (VOID **)&Dp)) || (Dp == NULL)) {
+    return 0;
+  }
+
+  Node = Dp;
+  Offsets[0] = 0;
+  while (!IsDevicePathEndType (Node) && (NNodes < 15)) {
+    NNodes++;
+    Offsets[NNodes] = Offsets[NNodes - 1] + DevicePathNodeLength (Node);
+    Node = NextDevicePathNode (Node);
+  }
+  EndLen = DevicePathNodeLength (Node);
+
+  /*
+   * Truncate the path at node boundaries, deepest prefixes first:
+   * LocateDevicePath resolves each to the owning device (partition,
+   * then disk), and the first one carrying BlockIo gives the size.
+   */
+  for (I = NNodes; I >= 1; I--) {
+    EFI_DEVICE_PATH_PROTOCOL  *Trunc;
+    EFI_HANDLE                Parent = NULL;
+
+    Trunc = AllocatePool (Offsets[I] + EndLen);
+    if (Trunc == NULL) {
+      break;
+    }
+    CopyMem (Trunc, Dp, Offsets[I]);
+    SetDevicePathEndNode (((UINT8 *)Trunc) + Offsets[I]);
+
+    Size = 0;
+    if (!EFI_ERROR (gBS->LocateDevicePath (&gEfiDevicePathProtocolGuid,
+                                           &Trunc, &Parent)) &&
+        (Parent != NULL)) {
+      Size = BlkBytes (Parent);
+    }
+    FreePool (Trunc);
+    if (Size != 0) {
+      return Size;
+    }
+  }
+  return 0;
+}
+
+STATIC
+EFI_FILE_PROTOCOL *
+OpenVolRoot (
+  IN EFI_HANDLE  Handle
+  )
+{
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *Fs = NULL;
+  EFI_FILE_PROTOCOL                *Root = NULL;
+
+  if (!EFI_ERROR (gBS->HandleProtocol (Handle,
+        &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs)) && (Fs != NULL) &&
+      !EFI_ERROR (Fs->OpenVolume (Fs, &Root))) {
+    return Root;
+  }
+  return NULL;
+}
+
+STATIC
+BOOLEAN
+FileExists (
+  IN EFI_FILE_PROTOCOL  *Root,
+  IN CONST CHAR16       *Name
+  )
+{
+  EFI_FILE_PROTOCOL  *F = NULL;
+
+  return !EFI_ERROR (Root->Open (Root, &F, (CHAR16 *)Name,
+                                 EFI_FILE_MODE_READ, 0));
+}
+
+/*
+ * Pick the volume to write to.  Pass 1: size in [3.7, 120] GB and it
+ * carries the field log (that is the SbBios stick, the same one the
+ * BIOS booted).  Pass 2: any size-plausible volume.  The Windows ESP
+ * and internal NVMe partitions are far below the floor, so the old
+ * "first writable volume" behaviour (screenshots landing on the boot
+ * loader) cannot come back.
+ *
+ * The file name is stamped with the RTC time; if the name is taken,
+ * _01 ... _99 suffixes are probed, so an existing shot is never
+ * overwritten.
+ */
+STATIC
+EFI_STATUS
+ShotPickVolume (
+  OUT EFI_FILE_PROTOCOL  **RootOut,
+  OUT CHAR16             *Name,
+  IN  UINTN              NameChars
+  )
+{
+  EFI_HANDLE        *Handles;
+  EFI_STATUS        Status;
+  UINTN             Index, Count, Pass, N;
+  EFI_TIME          T;
+  BOOLEAN           HaveTime;
+  STATIC UINTN      mShotSeq = 0;
+
+  Status = gBS->LocateHandleBuffer (ByProtocol,
+                   &gEfiSimpleFileSystemProtocolGuid, NULL, &Count, &Handles);
+  SbLog6 ("[gfx] shlh", (UINTN)Status, Count, 0, 0, 0, 0);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  HaveTime = !EFI_ERROR (gRT->GetTime (&T, NULL));
+  SbLog6 ("[gfx] shotin", Count, HaveTime, sizeof (UINTN), 0, 0, 0);
+
+  for (Pass = 0; Pass < 2; Pass++) {
+    for (Index = 0; Index < Count; Index++) {
+      UINT64            Size = VolBytes (Handles[Index]);
+      EFI_FILE_PROTOCOL *Root;
+      BOOLEAN           Mark;
+
+      SbLog6 ("[gfx] shotv", Index, Size / 0x100000,
+              (Size >= SHOT_MIN_B) && (Size <= SHOT_MAX_B), Pass, 0, 0);
+      if ((Size < SHOT_MIN_B) || (Size > SHOT_MAX_B)) {
+        continue;
+      }
+      Root = OpenVolRoot (Handles[Index]);
+      if (Root == NULL) {
+        continue;
+      }
+      Mark = FileExists (Root, SHOT_MARK);
+      SbLog6 ("[gfx] shotm", Index, Size / 0x100000, Mark, Pass, 0, 0);
+      if (Pass == 0 ? !Mark : Mark) {
+        Root->Close (Root);
+        continue;
+      }
+      for (N = 0; N < 100; N++) {
+        if (HaveTime) {
+          if (N == 0) {
+            UnicodeSPrint (Name, NameChars * sizeof (CHAR16),
+                           L"sbxshot_%04d%02d%02d_%02d%02d%02d.bmp",
+                           T.Year, T.Month, T.Day, T.Hour, T.Minute,
+                           T.Second);
+          } else {
+            UnicodeSPrint (Name, NameChars * sizeof (CHAR16),
+                           L"sbxshot_%04d%02d%02d_%02d%02d%02d_%02u.bmp",
+                           T.Year, T.Month, T.Day, T.Hour, T.Minute,
+                           T.Second, N);
+          }
+        } else {
+          UnicodeSPrint (Name, NameChars * sizeof (CHAR16),
+                         L"sbxshot_%03u.bmp",
+                         (UINT32)((mShotSeq + N) % 1000));
+        }
+        if (!FileExists (Root, Name)) {
+          *RootOut = Root;
+          mShotSeq++;
+          FreePool (Handles);
+          return EFI_SUCCESS;
+        }
+      }
+      Root->Close (Root);
+    }
+  }
+
+  FreePool (Handles);
+  return EFI_NOT_FOUND;
+}
+
+/*
+ * Print Screen: write the back buffer as a 24bpp BMP to the boot USB
+ * stick.  Used to grab hardware screenshots, where no other debug
+ * output exists.
  */
 EFI_STATUS
 GfxScreenshot (
@@ -647,18 +857,15 @@ GfxScreenshot (
   IN  UINTN   ResultChars
   )
 {
-  EFI_HANDLE        *Handles;
   EFI_STATUS        Status;
-  UINTN             Index, Count;
-  STATIC UINTN      mShotSeq = 0;
+  UINTN             Index;
   UINT32            FileSize;
   UINTN             RowBytes;
   UINT8             Header[54];
   UINT8             *Row;
-  EFI_FILE_PROTOCOL *File  = NULL;
-  EFI_FILE_PROTOCOL *Root  = NULL;
-  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *Fs = NULL;
-  CHAR16            Name[24];
+  EFI_FILE_PROTOCOL *File = NULL;
+  EFI_FILE_PROTOCOL *Root = NULL;
+  CHAR16            Name[48];
 
   RowBytes = ((mWidth * 3 + 3) / 4) * 4;
   FileSize = 54 + RowBytes * mHeight;
@@ -667,39 +874,21 @@ GfxScreenshot (
     return EFI_OUT_OF_RESOURCES;
   }
 
-  Handles = NULL;
-  Status  = gBS->LocateHandleBuffer (ByProtocol,
-                   &gEfiSimpleFileSystemProtocolGuid, NULL, &Count, &Handles);
+  Status = ShotPickVolume (&Root, Name, 48);
   if (EFI_ERROR (Status)) {
+    SbLog ("[gfx] shot vol", (UINTN)Status, 0);
     FreePool (Row);
     return Status;
   }
 
-  UnicodeSPrint (Name, sizeof (Name), L"%s%03u.bmp", SHOT_NAME,
-                 (UINT32)(mShotSeq++ % 1000));
-
-  for (Index = 0; Index < Count; Index++) {
-    if (EFI_ERROR (gBS->HandleProtocol (Handles[Index],
-           &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs)) || (Fs == NULL)) {
-      continue;
-    }
-    if (EFI_ERROR (Fs->OpenVolume (Fs, &Root))) {
-      continue;
-    }
-    Status = Root->Open (Root, &File, Name,
-                         EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE |
-                         EFI_FILE_MODE_CREATE, 0);
-    if (!EFI_ERROR (Status)) {
-      break;
-    }
+  Status = Root->Open (Root, &File, Name,
+                       EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE |
+                       EFI_FILE_MODE_CREATE, 0);
+  if (EFI_ERROR (Status)) {
+    SbLog ("[gfx] shot open", (UINTN)Status, 0);
     Root->Close (Root);
-    Root = NULL;
-  }
-  FreePool (Handles);
-
-  if ((File == NULL) || EFI_ERROR (Status)) {
     FreePool (Row);
-    return EFI_NO_MEDIA;
+    return Status;
   }
 
   ZeroMem (Header, sizeof (Header));
@@ -724,20 +913,25 @@ GfxScreenshot (
   {
     UINTN  HdrLen = sizeof (Header);
 
-    File->Write (File, &HdrLen, Header);
+    Status = File->Write (File, &HdrLen, Header);
   }
 
   /* BMP rows go bottom-up; back buffer is 0x00RRGGBB (already display order) */
-  for (Index = 0; Index < mHeight; Index++) {
-    UINT32  *Src = &mBack[(UINTN)(mHeight - 1 - Index) * mPitch];
-    UINTN   X;
+  if (!EFI_ERROR (Status)) {
+    for (Index = 0; Index < mHeight; Index++) {
+      UINT32  *Src = &mBack[(UINTN)(mHeight - 1 - Index) * mPitch];
+      UINTN   X;
 
-    for (X = 0; X < mWidth; X++) {
-      Row[X * 3 + 0] = (UINT8)(Src[X]);
-      Row[X * 3 + 1] = (UINT8)(Src[X] >> 8);
-      Row[X * 3 + 2] = (UINT8)(Src[X] >> 16);
+      for (X = 0; X < mWidth; X++) {
+        Row[X * 3 + 0] = (UINT8)(Src[X]);
+        Row[X * 3 + 1] = (UINT8)(Src[X] >> 8);
+        Row[X * 3 + 2] = (UINT8)(Src[X] >> 16);
+      }
+      Status = File->Write (File, &RowBytes, Row);
+      if (EFI_ERROR (Status)) {
+        break;
+      }
     }
-    File->Write (File, &RowBytes, Row);
   }
 
   File->Flush (File);
@@ -745,10 +939,12 @@ GfxScreenshot (
   Root->Close (Root);
   FreePool (Row);
 
-  if (Result != NULL && ResultChars > 0) {
+  SbLog6 ("[gfx] shot", (UINTN)Status, mWidth, mHeight, FileSize, 0, 0);
+
+  if ((Result != NULL) && (ResultChars > 0)) {
     StrCpyS (Result, ResultChars, Name);
   }
-  return EFI_SUCCESS;
+  return Status;
 }
 
 /* ------------------------------------------------------------ soft cursor */

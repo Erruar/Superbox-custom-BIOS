@@ -49,4 +49,5 @@
   gEfiSimpleTextInProtocolGuid              ## CONSUMES
   gEfiDevicePathProtocolGuid                ## CONSUMES
   gEfiSimpleFileSystemProtocolGuid          ## CONSUMES
+  gEfiBlockIoProtocolGuid                   ## CONSUMES
   gEfiPciIoProtocolGuid                     ## CONSUMES

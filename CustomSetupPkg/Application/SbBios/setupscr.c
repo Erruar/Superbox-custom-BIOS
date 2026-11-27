@@ -1200,7 +1200,7 @@ DrawFooter (
   STATIC CONST CHAR16  *Hints[][2] = {
     { L"General Help",  L"F1"  },
     { L"Boot Menu",     L"F7"  },
-    { L"Print Screen",  L"F12" },
+    { L"Screenshot",    L"F12" },
     { L"Load Defaults", L"F9"  },
     { L"Save and Exit", L"F10" },
   };
@@ -1605,12 +1605,12 @@ HandleKey (
     return;
   }
   if (K->ScanCode == SCAN_F12) {
-    CHAR16  Name[24];
+    CHAR16  Name[48];
 
-    if (!EFI_ERROR (GfxScreenshot (Name, 24))) {
+    if (!EFI_ERROR (GfxScreenshot (Name, 48))) {
       UnicodeSPrint (mStatus, sizeof (mStatus), L"saved %s", Name);
     } else {
-      StrCpyS (mStatus, 128, L"no writable volume for screenshot");
+      StrCpyS (mStatus, 128, L"no USB stick (3.7-120 GB) found");
     }
     return;
   }

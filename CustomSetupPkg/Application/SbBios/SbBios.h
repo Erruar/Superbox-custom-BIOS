@@ -36,6 +36,7 @@
 #include <Protocol/SimpleTextIn.h>
 #include <Protocol/DevicePath.h>
 #include <Protocol/SimpleFileSystem.h>
+#include <Protocol/BlockIo.h>
 #include <Protocol/PciIo.h>
 #include "fontdata.h"
 
