@@ -712,6 +712,106 @@ PromptHas (
 }
 
 STATIC
+BOOLEAN
+IsBootOrderRow (
+  IN UINTN  RowIdx
+  )
+{
+  STMT   *S;
+  INTN   I;
+
+  if (RowIdx >= mRowCount) {
+    return FALSE;
+  }
+  S = mRows[RowIdx];
+  if ((S == NULL) || (S->Kind != ST_ACTION) || (S->VarStoreId != 0) ||
+      ((S->QFlags & 0x06) == 0)) {
+    return FALSE;
+  }
+  if ((mForm != NULL) && PromptHas (mForm->Title, L"Boot Manager Order")) {
+    return TRUE;
+  }
+  for (I = (INTN)RowIdx - 1; I >= 0; I--) {
+    if (mRows[I]->Kind == ST_ACTION) {
+      continue;
+    }
+    if (mRows[I]->Kind == ST_SUBTITLE) {
+      if (PromptHas (mRows[I]->Prompt, L"Boot Order")) {
+        return TRUE;
+      }
+      if (PromptHas (mRows[I]->Prompt, L"Windows to Go")) {
+        continue;
+      }
+    }
+    break;
+  }
+  return FALSE;
+}
+
+STATIC
+VOID
+StepBootOrder (
+  IN UINTN  RowIdx,
+  IN UINT8  Op
+  )
+{
+  STMT        *S;
+  UINT16      FormId;
+  UINT16      QId;
+  UINT16      TargetQId;
+  UINTN       SavedTop;
+  UINTN       I;
+  EFI_STATUS  Status;
+
+  if ((mFs == NULL) || (mForm == NULL) || (RowIdx >= mRowCount)) {
+    return;
+  }
+  S = mRows[RowIdx];
+  FormId   = mForm->Id;
+  QId      = S->QuestionId;
+  SavedTop = mTop;
+
+  Status = ModelBootOrderOp (mFs, S, Op);
+  if (EFI_ERROR (Status)) {
+    UnicodeSPrint (mStatus, sizeof (mStatus), L"boot order update failed (%r)", Status);
+    return;
+  }
+
+  if (EFI_ERROR (ModelReloadFormset (mFs))) {
+    return;
+  }
+
+  mForm = ModelForm (mFs, FormId);
+  RebuildRows ();
+
+  TargetQId = (Op == 1 && QId > 0) ? (UINT16)(QId - 1)
+            : (Op == 0)            ? (UINT16)(QId + 1)
+            : QId;
+
+  for (I = 0; I < mRowCount; I++) {
+    if ((mRows[I]->Kind == ST_ACTION) && (mRows[I]->QuestionId == TargetQId)) {
+      mSel = I;
+      break;
+    }
+  }
+  if (I >= mRowCount) {
+    UINTN  Fallback = (Op == 1 && RowIdx > 0) ? (RowIdx - 1)
+                    : (Op == 0 && RowIdx + 1 < mRowCount) ? (RowIdx + 1)
+                    : RowIdx;
+    if ((Fallback < mRowCount) && IsSelectable (mRows[Fallback])) {
+      mSel = Fallback;
+    }
+  }
+
+  mTop = SavedTop;
+  if (mSel < mTop) {
+    mTop = mSel;
+  } else if (mSel >= mTop + (UINTN)VisibleRows ()) {
+    mTop = mSel - (UINTN)VisibleRows () + 1;
+  }
+}
+
+STATIC
 VOID
 Activate (
   IN STMT  *S
@@ -777,6 +877,8 @@ Activate (
       } else if (PromptHas (S->Prompt, L"Load Optimal") ||
                  PromptHas (S->Prompt, L"Load Setup Defaults")) {
         LoadDefaults ();
+      } else if (IsBootOrderRow (mSel)) {
+        StepBootOrder (mSel, 2);
       }
       break;
 
@@ -1724,6 +1826,8 @@ HandleKey (
           StepOneOf (mRows[mSel], -1);
         } else if (mRows[mSel]->Kind == ST_NUMERIC) {
           StepNumeric (mRows[mSel], -1);
+        } else if (IsBootOrderRow (mSel)) {
+          StepBootOrder (mSel, 1);
         }
       }
       return;
@@ -1733,6 +1837,8 @@ HandleKey (
           StepOneOf (mRows[mSel], 1);
         } else if (mRows[mSel]->Kind == ST_NUMERIC) {
           StepNumeric (mRows[mSel], 1);
+        } else if (IsBootOrderRow (mSel)) {
+          StepBootOrder (mSel, 0);
         }
       }
       return;

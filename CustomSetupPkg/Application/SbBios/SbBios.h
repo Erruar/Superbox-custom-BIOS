@@ -229,6 +229,8 @@ typedef BOOLEAN (*SB_SETUP_RUNNER) (VOID);
 EFI_STATUS ModelInit (VOID);
 EFI_STATUS ModelRunSetup (IN SB_SETUP_RUNNER Runner);
 VOID       ModelNotifyChanged (IN FORMSET *Fs, IN STMT *S, IN UINT64 Value);
+EFI_STATUS ModelBootOrderOp (IN FORMSET *Fs, IN STMT *S, IN UINT8 Op);
+EFI_STATUS ModelReloadFormset (IN FORMSET *Fs);
 VOID       ModelExit (VOID);
 FORMSET   *ModelFormsets (VOID);
 FORM      *ModelForm (FORMSET *Fs, UINT16 FormId);

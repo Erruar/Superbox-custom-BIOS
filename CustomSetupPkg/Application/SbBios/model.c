@@ -686,6 +686,71 @@ ModelNotifyChanged (
   Ca->Callback (Ca, EFI_BROWSER_ACTION_CHANGED, S->QuestionId, Type, &Val, &Req);
 }
 
+/*
+ * Reorder or toggle a dynamic boot-order action item (Op: 1=up, 0=down,
+ * 2=toggle).  Tries the standard changed-action dispatch with synthetic
+ * command QuestionIds first, then falls back to the 0x8001 item callback.
+ */
+EFI_STATUS
+ModelBootOrderOp (
+  IN FORMSET  *Fs,
+  IN STMT     *S,
+  IN UINT8    Op
+  )
+{
+  EFI_HII_CONFIG_ACCESS_PROTOCOL  *Ca;
+  EFI_IFR_TYPE_VALUE              Val;
+  EFI_BROWSER_ACTION_REQUEST      Req = EFI_BROWSER_ACTION_REQUEST_NONE;
+  UINT16                          CmdQId;
+  EFI_STATUS                      Status;
+
+  if ((Fs == NULL) || (S == NULL) || (S->QuestionId == 0)) {
+    return EFI_INVALID_PARAMETER;
+  }
+  Ca = GetConfigAccess (Fs);
+  if ((Ca == NULL) || (Ca->Callback == NULL)) {
+    return EFI_UNSUPPORTED;
+  }
+
+  CmdQId = (Op == 1) ? 0x103Au : (Op == 0) ? 0x103Bu : 0x103Cu;
+
+  ZeroMem (&Val, sizeof (Val));
+  Val.u32 = (UINT32)S->QuestionId;
+  Status = Ca->Callback (
+                 Ca,
+                 EFI_BROWSER_ACTION_CHANGED,
+                 CmdQId,
+                 EFI_IFR_TYPE_NUM_SIZE_32,
+                 &Val,
+                 &Req
+                 );
+  if (EFI_ERROR (Status)) {
+    ZeroMem (&Val, sizeof (Val));
+    Val.u8 = Op;
+    Status = Ca->Callback (
+                   Ca,
+                   0x8001,
+                   S->QuestionId,
+                   EFI_IFR_TYPE_NUM_SIZE_8,
+                   &Val,
+                   &Req
+                   );
+  }
+
+  if (!EFI_ERROR (Status)) {
+    VARSTORE  *V;
+    for (V = Fs->Vars; V != NULL; V = V->Next) {
+      if (StrCmp (V->Name, L"SystemConfig") == 0) {
+        V->Dirty = TRUE;
+        break;
+      }
+    }
+  }
+
+  SbLog6 ("[model] bootop", (UINTN)Status, S->QuestionId, Op, CmdQId, 0, 0);
+  return Status;
+}
+
 /* ------------------------------------------------------- value access */
 
 UINT64
@@ -1087,10 +1152,11 @@ FixupOneof (
 STATIC
 VOID
 ParseIfr (
-  IN UINT8           *Base,
-  IN UINTN           Size,
-  IN EFI_HII_HANDLE  Handle,
-  IN CHAR8           *Lang
+  IN     UINT8           *Base,
+  IN     UINTN           Size,
+  IN     EFI_HII_HANDLE  Handle,
+  IN     CHAR8           *Lang,
+  IN OUT FORMSET         **ListHead
   )
 {
   UINT8              *Ptr, *End;
@@ -1132,8 +1198,8 @@ ParseIfr (
         Fs = NewFormset (Ptr, Len, Handle, Lang);
         if (Fs != NULL) {
           Fs->Title = ModelGetString (Fs, ((EFI_IFR_FORM_SET *)Ptr)->FormSetTitle);
-          Fs->Next  = mFormsets;
-          mFormsets = Fs;
+          Fs->Next  = *ListHead;
+          *ListHead = Fs;
         }
         Form = NULL;
         St   = NULL;
@@ -1295,9 +1361,10 @@ ParseIfr (
 STATIC
 VOID
 ParsePackageList (
-  IN EFI_HII_HANDLE  Handle,
-  IN UINT8           *Buf,
-  IN UINTN           Size
+  IN     EFI_HII_HANDLE  Handle,
+  IN     UINT8           *Buf,
+  IN     UINTN           Size,
+  IN OUT FORMSET         **ListHead
   )
 {
   EFI_HII_PACKAGE_LIST_HEADER  *List;
@@ -1331,7 +1398,7 @@ ParsePackageList (
     }
     if (Pkg->Type == EFI_HII_PACKAGE_FORMS) {
       ParseIfr (Buf + Off + sizeof (EFI_HII_PACKAGE_HEADER),
-                Pkg->Length - sizeof (EFI_HII_PACKAGE_HEADER), Handle, Lang);
+                Pkg->Length - sizeof (EFI_HII_PACKAGE_HEADER), Handle, Lang, ListHead);
     }
     Off += Pkg->Length;
   }
@@ -1362,6 +1429,112 @@ ModelForm (
     }
   }
   return NULL;
+}
+
+STATIC
+VOID
+FreeForms (
+  IN FORM  *Forms
+  )
+{
+  FORM  *F;
+  FORM  *NextF;
+
+  for (F = Forms; F != NULL; F = NextF) {
+    STMT  *S;
+    STMT  *NextS;
+
+    NextF = F->Next;
+    for (S = F->Statements; S != NULL; S = NextS) {
+      NextS = S->Next;
+      if (S->Prompt != NULL) {
+        FreePool (S->Prompt);
+      }
+      if (S->Text2 != NULL) {
+        FreePool (S->Text2);
+      }
+      if (S->Options != NULL) {
+        UINTN  I;
+        for (I = 0; I < S->OptionCount; I++) {
+          if (S->Options[I].Label != NULL) {
+            FreePool (S->Options[I].Label);
+          }
+        }
+        FreePool (S->Options);
+      }
+      FreePool (S);
+    }
+    if (F->Title != NULL) {
+      FreePool (F->Title);
+    }
+    FreePool (F);
+  }
+}
+
+EFI_STATUS
+ModelReloadFormset (
+  IN FORMSET  *Fs
+  )
+{
+  EFI_STATUS  Status;
+  UINT8       *Cfg     = NULL;
+  UINTN       CfgSize  = 0;
+  FORMSET     *Tmp     = NULL;
+  FORMSET     *T;
+  FORMSET     *NextT;
+  BOOLEAN     Replaced = FALSE;
+
+  if ((Fs == NULL) || (Fs->Handle == NULL) || (mHiiDb == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Status = mHiiDb->ExportPackageLists (mHiiDb, Fs->Handle, &CfgSize, NULL);
+  if (CfgSize == 0) {
+    return EFI_NOT_FOUND;
+  }
+  Cfg = AllocatePool (CfgSize);
+  if (Cfg == NULL) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  Status = mHiiDb->ExportPackageLists (
+                     mHiiDb,
+                     Fs->Handle,
+                     &CfgSize,
+                     (EFI_HII_PACKAGE_LIST_HEADER *)Cfg
+                     );
+  if (!EFI_ERROR (Status) && (CfgSize > 0)) {
+    ParsePackageList (Fs->Handle, Cfg, CfgSize, &Tmp);
+  }
+  FreePool (Cfg);
+
+  for (T = Tmp; T != NULL; T = NextT) {
+    VARSTORE  *V;
+    VARSTORE  *NextV;
+
+    NextT = T->Next;
+    if (!Replaced && CompareGuid (&T->Guid, &Fs->Guid)) {
+      FORM  *OldForms = Fs->Forms;
+      Fs->Forms = T->Forms;
+      T->Forms  = NULL;
+      FreeForms (OldForms);
+      Replaced = TRUE;
+    }
+    FreeForms (T->Forms);
+    if (T->Title != NULL) {
+      FreePool (T->Title);
+    }
+    for (V = T->Vars; V != NULL; V = NextV) {
+      NextV = V->Next;
+      if (V->Data != NULL) {
+        FreePool (V->Data);
+      }
+      FreePool (V);
+    }
+    FreePool (T);
+  }
+
+  return Replaced ? EFI_SUCCESS : EFI_NOT_FOUND;
 }
 
 EFI_STATUS
@@ -1421,7 +1594,7 @@ ModelInit (
                        mHiiDb, Handles[Index], &CfgSize,
                        (EFI_HII_PACKAGE_LIST_HEADER *)Cfg);
     if (!EFI_ERROR (Status) && (CfgSize > 0)) {
-      ParsePackageList (Handles[Index], Cfg, CfgSize);
+      ParsePackageList (Handles[Index], Cfg, CfgSize, &mFormsets);
     }
     FreePool (Cfg);
   }
@@ -1542,6 +1715,16 @@ ModelRunSetup (
 
   if (!mRunnerRan && (Runner != NULL)) {
     Runner ();
+  }
+
+  if (!mRunnerRan && (mSetupAppHandle != NULL) && (mSetupAppPhase != NULL)) {
+    *mSetupAppPhase = 1;
+    gBS->ReinstallProtocolInterface (
+           mSetupAppHandle,
+           &mSetupAppGuid,
+           mSetupAppPhase,
+           mSetupAppPhase
+           );
   }
 
   if (mSetupAppHandle != NULL) {
